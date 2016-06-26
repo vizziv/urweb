@@ -1,5 +1,7 @@
 structure Cache = struct
 
+type info = {index : int, keyLevels : int list list}
+
 type cache =
      {(* Takes a query ID and parameters (and, for store, the value to
          store) and gives an FFI call that checks, stores, or flushes the
@@ -12,6 +14,6 @@ type cache =
       lock : int * bool (* true = write, false = read *) -> Mono.exp',
       (* Generates C needed for FFI calls in check, store, and flush. *)
       setupGlobal : Print.PD.pp_desc,
-      setupQuery : {index : int, params : int} -> Print.PD.pp_desc}
+      setupQuery : info -> Print.PD.pp_desc}
 
 end

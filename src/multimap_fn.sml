@@ -4,6 +4,7 @@ functor MultimapFn (structure KeyMap : ORD_MAP structure ValSet : ORD_SET) = str
     type itemSet = ValSet.set
     type multimap = ValSet.set KeyMap.map
     val empty : multimap = KeyMap.empty
+    val listItemsi : multimap -> (key * itemSet) list = KeyMap.listItemsi
     fun insertSet (kToVs : multimap, k : key, vs : itemSet) : multimap =
         KeyMap.unionWith ValSet.union (kToVs, KeyMap.singleton (k, vs))
     fun insert (kToVs : multimap, k : key, v : item) : multimap =

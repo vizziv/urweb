@@ -183,7 +183,6 @@ $(SRC)/pair_key_fn.sml
 $(SRC)/triple_key_fn.sml
 
 $(SRC)/cache.sml
-$(SRC)/toy_cache.sml
 $(SRC)/lru_cache.sml
 
 $(SRC)/monoize.sig

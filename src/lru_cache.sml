@@ -33,38 +33,35 @@ fun lock (index, write) =
 open Print
 open Print.PD
 
-fun setupQuery {index, params} =
+fun setupQuery {index, keyLevels} =
     let
         val i = Int.toString index
 
-        fun paramRepeat itemi sep =
-            let
-                fun f n =
-                    if n < 0 then ""
-                    else if n = 0 then itemi (Int.toString 0)
-                    else f (n-1) ^ sep ^ itemi (Int.toString n)
-            in
-                f (params - 1)
-            end
+        val numKeysInLevel = map length keyLevels
 
-        fun paramRepeatRev itemi sep =
-            let
-                fun f n =
-                    if n < 0 then ""
-                    else if n = 0 then itemi (Int.toString 0)
-                    else itemi (Int.toString n) ^ sep ^ f (n-1)
-            in
-                f (params - 1)
-            end
+        val numLevels = length keyLevels
 
-        fun paramRepeatInit itemi sep =
-            if params = 0 then "" else sep ^ paramRepeat itemi sep
+        val numKeysTotal = List.foldl op+ 0 numKeysInLevel
+
+        fun mapSep f sep =
+         fn [] => ""
+          | (x :: xs) => f x ^ sep ^ mapSep f sep xs
+
+        fun mapSepInit itemi sep =
+         fn [] => ""
+          | xs => sep ^ mapSep itemi sep xs
+
+        fun paramRepeat f sep = mapSep f sep (List.tabulate (numKeysTotal, Int.toString))
+
+        fun paramRepeatInit f sep = mapSepInit f sep (List.tabulate (numKeysTotal, Int.toString))
+
+        fun showList f xs = "{" ^ mapSep f ", " xs ^ "}"
 
         val typedArgs = paramRepeatInit (fn p => "uw_Basis_string p" ^ p) ", "
 
-        val revArgs = paramRepeatRev (fn p => "p" ^ p) ", "
+        val args = paramRepeat (fn p => "p" ^ p) ", "
 
-        val argNums = List.tabulate (params, fn i => "p" ^ Int.toString i)
+        val argNums = List.tabulate (numKeysTotal, fn i => "p" ^ Int.toString i)
     in
         Print.box
             [string ("static uw_Sqlcache_Cache cacheStruct" ^ i ^ " = {"),
@@ -75,7 +72,13 @@ fun setupQuery {index, params} =
              newline,
              string "  .table = NULL,",
              newline,
-             string ("  .numKeys = " ^ Int.toString params ^ ","),
+             string ("  .numKeysTotal = " ^ showList (showList Int.toString) keyLevels ^ ","),
+             newline,
+             string ("  .numKeysInLevel = " ^ showList Int.toString numKeysInLevel ^ ","),
+             newline,
+             string ("  .numLevels = " ^ Int.toString numLevels ^ ","),
+             newline,
+             string ("  .numKeysTotal = " ^ Int.toString numKeysTotal ^ ","),
              newline,
              string "  .timeInvalid = 0,",
              newline,
@@ -104,7 +107,7 @@ fun setupQuery {index, params} =
              string ("static uw_Basis_string uw_Sqlcache_check" ^ i),
              string ("(uw_context ctx" ^ typedArgs ^ ") {"),
              newline,
-             string ("  char *ks[] = {" ^ revArgs ^ "};"),
+             string ("  char *ks[] = {" ^ args ^ "};"),
              newline,
              string ("  uw_Sqlcache_Value *v = uw_Sqlcache_check(ctx, cache" ^ i ^ ", ks);"),
              newline,
@@ -121,7 +124,7 @@ fun setupQuery {index, params} =
              newline,
              string "  } else {",
              newline,
-             (*string ("    printf(\"SQLCACHE: miss " ^ i ^ " " ^ String.concatWith ", " (List.tabulate (params, fn _ => "%s")) ^ ".\\n\""),
+             (*string ("    printf(\"SQLCACHE: miss " ^ i ^ " " ^ String.concatWith ", " (List.tabulate (numKeysTotal, fn _ => "%s")) ^ ".\\n\""),
              (case argNums of
                   [] => Print.box []
                  | _ => Print.box [string ", ",
@@ -141,7 +144,7 @@ fun setupQuery {index, params} =
              string ("static uw_unit uw_Sqlcache_store" ^ i),
              string ("(uw_context ctx, uw_Basis_string s" ^ typedArgs ^ ") {"),
              newline,
-             string ("  char *ks[] = {" ^ revArgs ^ "};"),
+             string ("  char *ks[] = {" ^ args ^ "};"),
              newline,
              string ("  uw_Sqlcache_Value *v = malloc(sizeof(uw_Sqlcache_Value));"),
              newline,
@@ -164,7 +167,7 @@ fun setupQuery {index, params} =
              string ("static uw_unit uw_Sqlcache_flush" ^ i),
              string ("(uw_context ctx" ^ typedArgs ^ ") {"),
              newline,
-             string ("  char *ks[] = {" ^ revArgs ^ "};"),
+             string ("  char *ks[] = {" ^ args ^ "};"),
              newline,
              string ("  uw_Sqlcache_flush(ctx, cache" ^ i ^ ", ks);"),
              newline,
@@ -179,28 +182,9 @@ fun setupQuery {index, params} =
 
 val setupGlobal = string "/* No global setup for LRU cache. */"
 
-
-(* Bundled up. *)
-
-(* For now, use the toy implementation if there are no arguments. *)
-fun toyIfNoKeys numKeys implLru implToy args =
-    if numKeys args = 0
-    then implToy args
-    else implLru args
-
+(* Bundle it up. *)
 val cache =
-    (* let *)
-    (*     val {check = toyCheck, *)
-    (*          store = toyStore, *)
-    (*          flush = toyFlush, *)
-    (*          setupQuery = toySetupQuery, *)
-    (*          ...} = ToyCache.cache *)
-    (* in *)
-        (* {check = toyIfNoKeys (length o #2) check toyCheck, *)
-        (*  store = toyIfNoKeys (length o #2) store toyStore, *)
-        (*  flush = toyIfNoKeys (length o #2) flush toyFlush, *)
     {check = check, store = store, flush = flush, lock = lock,
      setupQuery = setupQuery, setupGlobal = setupGlobal}
-    (* end *)
 
 end

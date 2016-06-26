@@ -70,7 +70,7 @@ fun indexOf test =
 open Mono
 
 (* Filled in by [addFlushing]. *)
-val ffiInfoRef : {index : int, params : int} list ref = ref []
+val ffiInfoRef : Cache.info list ref = ref []
 
 fun resetFfiInfo () = ffiInfoRef := []
 
@@ -1450,17 +1450,17 @@ fun cacheTree (effs : IS.set) ((env, exp as (exp', loc)), state) =
                                           (fn (subexp, (_, unbinds)) =>
                                               InvalInfo.unbind (invalInfoOfSubexp subexp, unbinds))
                                           (subexps, args)))
-                             <\obind\>
-                              (fn invalInfo =>
-                                  SOME (Cachable (invalInfo,
-                                                  fn state =>
-                                                     case cacheExp (env,
-                                                                    f (map (#2 o #1) args),
-                                                                    invalInfo,
-                                                                    state) of
-                                                         NONE => mkExp state
-                                                       | SOME (e', state) => ((e', loc), state)),
-                                        state))
+                         <\obind\>
+                          (fn invalInfo =>
+                              SOME (Cachable (invalInfo,
+                                              fn state =>
+                                                 case cacheExp (env,
+                                                                f (map (#2 o #1) args),
+                                                                invalInfo,
+                                                                state) of
+                                                     NONE => mkExp state
+                                                   | SOME (e', state) => ((e', loc), state)),
+                                    state))
             in
                 case attempt of
                     SOME (subexp, state) => (subexp, state)
@@ -1588,6 +1588,8 @@ val atomosToExps = map Invalidations.optionAtomExpToExp
 
 val invalidations = Invalidations.invalidations
 
+fun keyLevels invs = raise Fail "FIXME"
+
 fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state), effs) =
     let
         val flushes = List.concat
@@ -1622,8 +1624,8 @@ fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state),
           | e' => (e', indexToInvs)
         val (file, indexToInvs) = fileMapfold (fn e => fn s => doExpFlipped s e) file IM.empty
     in
-        (* FIXME *)
-        ffiInfoRef := [];
+        ffiInfoRef := map (fn (i, invs) => {index = i, keyLevels = keyLevels invs})
+                          (IBLMM.listItemsi indexToInvs);
         file
     end
 
