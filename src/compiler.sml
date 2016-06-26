@@ -1476,12 +1476,14 @@ val sqlcache = {
 
 val toSqlcache = transform sqlcache "sqlcache" o toSigcheck
 
+val toMono_reduce4 = transform mono_reduce "mono_reduce4" o toSqlcache
+
 val cjrize = {
     func = Cjrize.cjrize,
     print = CjrPrint.p_file CjrEnv.empty
 }
 
-val toCjrize = transform cjrize "cjrize" o toSqlcache
+val toCjrize = transform cjrize "cjrize" o toMono_reduce4
 
 val prepare = {
     func = Prepare.prepare,

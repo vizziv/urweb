@@ -35,7 +35,6 @@ open Print.PD
 
 fun setupQuery {index, params} =
     let
-
         val i = Int.toString index
 
         fun paramRepeat itemi sep =

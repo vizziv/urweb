@@ -1,8 +1,8 @@
 table tab : {Id : int, Val : int, Foo : int} PRIMARY KEY Id
 
-fun cache id =
+fun cache id foo =
     res <- oneOrNoRows (SELECT A.Val FROM (tab AS A JOIN tab AS B ON A.Id = B.Id)
-                                     WHERE B.Id = {[id]});
+                                     WHERE B.Id = {[id]} AND A.Foo = {[foo]});
     return <xml><body>
       cache
       {case res of

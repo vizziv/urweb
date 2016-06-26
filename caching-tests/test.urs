@@ -1,4 +1,4 @@
-val cache : int -> transaction page
+val cache : int -> int -> transaction page
 (* val cacheAlt : int -> transaction page *)
 (* val cacheR : {Id : int, FooBar : int} -> transaction page *)
 (* val cache2 : int -> int -> transaction page *)

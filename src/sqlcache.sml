@@ -466,8 +466,7 @@ datatype cacheArg = AsIs of exp | Urlify of exp
 structure InvalInfo :> sig
     type t
     type state = {tableToIndices : SIMM.multimap,
-                  indexToInvalInfo : (t * int) IntBinaryMap.map,
-                  ffiInfo : {index : int, params : int} list,
+                  indexToInvalInfoNumArgs : (t * int) IM.map,
                   index : int}
     val empty : t
     val singleton : Sql.query -> t
@@ -487,8 +486,7 @@ end = struct
     type t = (Sql.query * subst) list
 
     type state = {tableToIndices : SIMM.multimap,
-                  indexToInvalInfo : (t * int) IntBinaryMap.map,
-                  ffiInfo : {index : int, params : int} list,
+                  indexToInvalInfoNumArgs : (t * int) IM.map,
                   index : int}
 
     structure AK = PairKeyFn(
@@ -765,8 +763,7 @@ end = struct
                                                   (tablesOfQuery q))
                                      (#tableToIndices state)
                                      qs,
-         indexToInvalInfo = IM.insert (#indexToInvalInfo state, index, (qs, numArgs)),
-         ffiInfo = {index = index, params = numArgs} :: #ffiInfo state,
+         indexToInvalInfoNumArgs = IM.insert (#indexToInvalInfoNumArgs state, index, (qs, numArgs)),
          index = index + 1}
 
 end
@@ -1073,8 +1070,7 @@ structure ConflictMaps = struct
 
     (* No eqs should have key conflicts because no variable is in two
        equivalence classes. *)
-    val mergeEqs : (atomExp IntBinaryMap.map option list
-                    -> atomExp IntBinaryMap.map option) =
+    val mergeEqs : atomExp IM.map option list -> atomExp IM.map option =
         List.foldr (omap2 (IM.unionWith (fn _ => raise Fail "Sqlcache: ConflictMaps.mergeEqs")))
                    (SOME IM.empty)
 
@@ -1172,7 +1168,10 @@ fun fileAllMapfoldB doExp file start =
         Search.Continue x => x
       | Search.Return _ => raise Fail "Sqlcache: fileAllMapfoldB"
 
-fun fileMap doExp file = #1 (fileAllMapfoldB (fn _ => fn e => fn _ => (doExp e, ())) file ())
+fun fileMapfold doExp file start =
+    fileAllMapfoldB (fn _ => fn e => fn s => doExp e s) file start
+
+fun fileMap doExp file = #1 (fileMapfold (fn e => fn _ => (doExp e, ())) file ())
 
 (* TODO: make this a bit prettier.... *)
 (* TODO: factour out identical subexpressions to the same variable.... *)
@@ -1524,8 +1523,7 @@ fun addCaching file =
         (fileTopLevelMapfoldB doTopLevelExp
                               file
                               {tableToIndices = SIMM.empty,
-                               indexToInvalInfo = IM.empty,
-                               ffiInfo = [],
+                               indexToInvalInfoNumArgs = IM.empty,
                                index = 0},
          effs)
     end
@@ -1578,17 +1576,17 @@ end
 
 val invalidations = Invalidations.invalidations
 
-fun addFlushing ((file, {tableToIndices, indexToInvalInfo, ffiInfo, ...} : state), effs) =
+fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state), effs) =
     let
         val flushes = List.concat
                       o map (fn (i, argss) => map (fn args => flush (i, args)) argss)
-        val doExp =
+        fun doExpFlipped indexToFfiInfo =
          fn dmlExp as EDml (dmlText, failureMode) =>
             let
                 val inval =
                     case Sql.parse Sql.dml dmlText of
                         SOME dmlParsed =>
-                        SOME (map (fn i => case IM.find (indexToInvalInfo, i) of
+                        SOME (map (fn i => case IM.find (indexToInvalInfoNumArgs, i) of
                                                 SOME invalInfo =>
                                                 (i, invalidations (invalInfo, dmlParsed))
                                               (* TODO: fail more gracefully. *)
@@ -1601,13 +1599,13 @@ fun addFlushing ((file, {tableToIndices, indexToInvalInfo, ffiInfo, ...} : state
                     (* TODO: fail more gracefully. *)
                     NONE => (Print.preface ("DML", MonoPrint.p_exp MonoEnv.empty dmlText);
                              raise Fail "Sqlcache: addFlushing (b)")
-                  | SOME invs => sequence (flushes invs @ [dmlExp])
+                  | SOME invs => (sequence (flushes invs @ [dmlExp]), indexToFfiInfo)
             end
-          | e' => e'
-        val file = fileMap doExp file
-
+          | e' => (e', indexToFfiInfo)
+        val (file, indexToFfiInfo) = fileMapfold (fn e => fn s => doExpFlipped s e) file IM.empty
     in
-        ffiInfoRef := ffiInfo;
+        (* FIXME *)
+        ffiInfoRef := [];
         file
     end
 
