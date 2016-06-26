@@ -4726,16 +4726,20 @@ static unsigned long uw_Sqlcache_timeMax(unsigned long x, unsigned long y) {
 
 static char uw_Sqlcache_keySep = '_';
 
-static char *uw_Sqlcache_allocKeyBuffer(char **keys, size_t numKeys) {
+static char *uw_Sqlcache_allocKeyBuffer(uw_Sqlcache_Cache *cache, char **keys) {
   size_t len = 0;
-  while (numKeys-- > 0) {
-    char* k = keys[numKeys];
-    if (!k) {
-      // Can only happen when flushing, in which case we don't need anything past the null key.
-      break;
+  size_t iLevel;
+  for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
+    size_t iKey;
+    for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
+      char* k = keys[cache->keyLevels[iLevel][iKey]];
+      if (!k) {
+        // Can only happen when flushing, in which case we don't need anything past the null key.
+        break;
+      }
+      // Leave room for separator.
+      len += 1 + strlen(k);
     }
-    // Leave room for separator.
-    len += 1 + strlen(k);
   }
   char *buf = malloc(len+1);
   // If nothing is copied into the buffer, it should look like it has length 0.
@@ -4757,12 +4761,11 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
   } else {
     pthread_rwlock_rdlock(&cache->lockIn);
   }
-  size_t numKeys = cache->numKeys;
-  char *key = uw_Sqlcache_allocKeyBuffer(keys, numKeys);
+  char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
   char *buf = key;
   time_t timeInvalid = cache->timeInvalid;
   uw_Sqlcache_Entry *entry = NULL;
-  if (numKeys == 0) {
+  if (cache->numLevels == 0) {
     entry = cache->table;
     if (!entry) {
       free(key);
@@ -4770,8 +4773,12 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
       return NULL;
     }
   } else {
-    while (numKeys-- > 0) {
-      buf = uw_Sqlcache_keyCopy(buf, keys[numKeys]);
+    size_t iLevel;
+    for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
+      size_t iKey;
+      for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
+        buf = uw_Sqlcache_keyCopy(buf, keys[cache->keyLevels[iLevel][iKey]]);
+      }
       size_t len = buf - key;
       entry = uw_Sqlcache_find(cache, key, len, doBump);
       if (!entry) {
@@ -4794,10 +4801,9 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
 
 static void uw_Sqlcache_storeCommitOne(uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
   pthread_rwlock_wrlock(&cache->lockIn);
-  size_t numKeys = cache->numKeys;
   time_t timeNow = uw_Sqlcache_getTimeNow(cache);
   uw_Sqlcache_Entry *entry = NULL;
-  if (numKeys == 0) {
+  if (cache->numLevels == 0) {
     entry = cache->table;
     if (!entry) {
       entry = calloc(1, sizeof(uw_Sqlcache_Entry));
@@ -4807,12 +4813,15 @@ static void uw_Sqlcache_storeCommitOne(uw_Sqlcache_Cache *cache, char **keys, uw
       cache->table = entry;
     }
   } else {
-    char *key = uw_Sqlcache_allocKeyBuffer(keys, numKeys);
+    char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
     char *buf = key;
-    while (numKeys-- > 0) {
-      buf = uw_Sqlcache_keyCopy(buf, keys[numKeys]);
+    size_t iLevel;
+    for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
+      size_t iKey;
+      for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
+        buf = uw_Sqlcache_keyCopy(buf, keys[cache->keyLevels[iLevel][iKey]]);
+      }
       size_t len = buf - key;
-
       entry = uw_Sqlcache_find(cache, key, len, 1);
       if (!entry) {
         entry = calloc(1, sizeof(uw_Sqlcache_Entry));
@@ -4855,9 +4864,9 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
   uw_Sqlcache_Update *update = ctx->cacheUpdate;
   while (update) {
     char** keys = update->keys;
-    size_t numKeys = update->cache->numKeys;
-    while (numKeys-- > 0) {
-      free(keys[numKeys]);
+    size_t i;
+    for (i = 0; i < update->cache->numKeysTotal; i++) {
+      free(keys[i]);
     }
     free(keys);
     // Don't free [update->value]: it's in the cache now!
@@ -4898,11 +4907,12 @@ void uw_Sqlcache_wlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
   uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
 }
 
-static char **uw_Sqlcache_copyKeys(char **keys, size_t numKeys) {
-  char **copy = malloc(sizeof(char *) * numKeys);
-  while (numKeys-- > 0) {
-    char *k = keys[numKeys];
-    copy[numKeys] = k ? strdup(k) : NULL;
+static char **uw_Sqlcache_copyKeys(uw_Sqlcache_Cache *cache, char **keys) {
+  char **copy = malloc(sizeof(char *) * cache->numKeysTotal);
+  size_t i;
+  for (i = 0; i < cache->numKeysTotal; i++) {
+    char *k = keys[i];
+    copy[i] = k ? strdup(k) : NULL;
   }
   return copy;
 }
@@ -4910,7 +4920,7 @@ static char **uw_Sqlcache_copyKeys(char **keys, size_t numKeys) {
 void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
   uw_Sqlcache_Update *update = malloc(sizeof(uw_Sqlcache_Update));
   update->cache = cache;
-  update->keys = uw_Sqlcache_copyKeys(keys, cache->numKeys);
+  update->keys = uw_Sqlcache_copyKeys(cache, keys);
   update->value = value;
   update->next = NULL;
   // Can't use [uw_Sqlcache_getTimeNow] because it modifies state and we don't have the lock.
@@ -4930,35 +4940,46 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
   // This is safe to do because we will always call [uw_Sqlcache_wlock] earlier.
   // If the transaction fails, the only harm done is a few extra cache misses.
   pthread_rwlock_wrlock(&cache->lockIn);
-  size_t numKeys = cache->numKeys;
-  if (numKeys == 0) {
+  if (cache->numLevels == 0) {
     uw_Sqlcache_Entry *entry = cache->table;
     if (entry) {
       uw_Sqlcache_freeValue(entry->value);
       entry->value = NULL;
     }
   } else {
-    char *key = uw_Sqlcache_allocKeyBuffer(keys, numKeys);
+    char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
     char *buf = key;
     time_t timeNow = uw_Sqlcache_getTimeNow(cache);
-    while (numKeys-- > 0) {
-      char *k = keys[numKeys];
-      if (!k) {
-        size_t len = buf - key;
-        if (len == 0) {
-          // The first key was null.
-          cache->timeInvalid = timeNow;
-        } else {
-          uw_Sqlcache_Entry *entry = uw_Sqlcache_find(cache, key, len, 0);
-          if (entry) {
-            entry->timeInvalid = timeNow;
+    size_t iLevel;
+    for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
+      char *bufWithinLevel = buf;
+      size_t iKey;
+      for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
+        // During this entire block, buf is the buffer pointer at the beginning
+        // of this level, so if a single key in a level is NULL, we find the
+        // entry with keys specified up to the previous level (which is
+        // entirely not null if we've reached this point). The plan is for
+        // either all or none of the keys in a level to be NULL, but this
+        // handles only part of a level being NULL just in case.
+        char* k = keys[cache->keyLevels[iLevel][iKey]];
+        bufWithinLevel = uw_Sqlcache_keyCopy(bufWithinLevel, k);
+        if (!k) {
+          size_t len = buf - key;
+          if (len == 0) {
+            // The first key was null.
+            cache->timeInvalid = timeNow;
+          } else {
+            uw_Sqlcache_Entry *entry = uw_Sqlcache_find(cache, key, len, 0);
+            if (entry) {
+              entry->timeInvalid = timeNow;
+            }
           }
+          free(key);
+          pthread_rwlock_unlock(&cache->lockIn);
+          return;
         }
-        free(key);
-        pthread_rwlock_unlock(&cache->lockIn);
-        return;
       }
-      buf = uw_Sqlcache_keyCopy(buf, k);
+      buf = bufWithinLevel;
     }
     // All the keys were non-null, so we delete the pointed-to entry.
     size_t len = buf - key;

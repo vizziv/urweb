@@ -14,6 +14,17 @@ structure SM = BinaryMapFn(SK)
 structure IIMM = MultimapFn(structure KeyMap = IM structure ValSet = IS)
 structure SIMM = MultimapFn(structure KeyMap = SM structure ValSet = IS)
 
+structure BK = struct
+    type ord_key = bool
+    val compare =
+     fn (false, false) => EQUAL
+      | (false, true) => LESS
+      | (true, false) => GREATER
+      | (true, true) => EQUAL
+end
+structure BLS = BinarySetFn(ListKeyFn(BK))
+structure IBLMM = MultimapFn(structure KeyMap = IM structure ValSet = BLS)
+
 fun id x = x
 
 fun iterate f n x = if n < 0
@@ -1565,8 +1576,7 @@ structure Invalidations = struct
         let
             val query = InvalInfo.query invalInfo
         in
-            (map (map optionAtomExpToExp)
-             o removeRedundant madeRedundantBy
+            (removeRedundant madeRedundantBy
              o map (eqsToInvalidation numArgs)
              o conflictMaps)
                 (pairToFormulas (query, dml))
@@ -1574,21 +1584,28 @@ structure Invalidations = struct
 
 end
 
+val atomosToExps = map Invalidations.optionAtomExpToExp
+
 val invalidations = Invalidations.invalidations
 
 fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state), effs) =
     let
         val flushes = List.concat
-                      o map (fn (i, argss) => map (fn args => flush (i, args)) argss)
-        fun doExpFlipped indexToFfiInfo =
+                      o map (fn (i, argss) => map (fn args => flush (i, atomosToExps args)) argss)
+        fun updateFfiInfos ((i, argss), indexToInvs) =
+            let
+                fun update (args, indexToInvs) = IBLMM.insert (indexToInvs, i, map isSome args)
+            in
+                List.foldl update indexToInvs argss
+            end
+        fun doExpFlipped indexToInvs =
          fn dmlExp as EDml (dmlText, failureMode) =>
             let
                 val inval =
                     case Sql.parse Sql.dml dmlText of
                         SOME dmlParsed =>
                         SOME (map (fn i => case IM.find (indexToInvalInfoNumArgs, i) of
-                                                SOME invalInfo =>
-                                                (i, invalidations (invalInfo, dmlParsed))
+                                                SOME iina => (i, invalidations (iina, dmlParsed))
                                               (* TODO: fail more gracefully. *)
                                               (* This probably means invalidating everything.... *)
                                               | NONE => raise Fail "Sqlcache: addFlushing (a)")
@@ -1599,10 +1616,11 @@ fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state),
                     (* TODO: fail more gracefully. *)
                     NONE => (Print.preface ("DML", MonoPrint.p_exp MonoEnv.empty dmlText);
                              raise Fail "Sqlcache: addFlushing (b)")
-                  | SOME invs => (sequence (flushes invs @ [dmlExp]), indexToFfiInfo)
+                  | SOME invs => (sequence (flushes invs @ [dmlExp]),
+                                  List.foldl updateFfiInfos indexToInvs invs)
             end
-          | e' => (e', indexToFfiInfo)
-        val (file, indexToFfiInfo) = fileMapfold (fn e => fn s => doExpFlipped s e) file IM.empty
+          | e' => (e', indexToInvs)
+        val (file, indexToInvs) = fileMapfold (fn e => fn s => doExpFlipped s e) file IM.empty
     in
         (* FIXME *)
         ffiInfoRef := [];
