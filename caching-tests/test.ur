@@ -23,6 +23,17 @@ fun flush w x y z =
       flush w={[w]} x={[x]} y={[y]} z={[z]}
     </body></xml>
 
+fun flush2 w x y z =
+    dml (UPDATE tab
+         SET Val = Val * (Val + 2) / Val - 3
+         WHERE W = {[w]}
+           AND X = {[x]}
+           AND Y = {[y]});
+    return <xml><body>
+      flush' w={[w]} x={[x]} y={[y]} z={[z]}
+    </body></xml>
+
+
 (* fun cacheAlt id = *)
 (*     res <- oneOrNoRows (SELECT Q.Id *)
 (*                         FROM (SELECT Tab.Id AS Id FROM tab WHERE Tab.Id = {[id]}) *)

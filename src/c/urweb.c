@@ -4775,12 +4775,12 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
   } else {
     size_t iLevel;
     for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
-      printf("check level %lu start: %s\n", iLevel, key);
+      // DEBUG: printf("check level %lu start: %s\n", iLevel, key);
       size_t iKey;
       for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
-        printf("check level %lu key %lu start: %s\n", iLevel, iKey, key);
+        // DEBUG: printf("check level %lu key %lu start: %s\n", iLevel, iKey, key);
         buf = uw_Sqlcache_keyCopy(buf, keys[cache->keyLevels[iLevel][iKey]]);
-        printf("check level %lu key %lu end: %s\n", iLevel, iKey, key);
+        // DEBUG: printf("check level %lu key %lu end: %s\n", iLevel, iKey, key);
       }
       size_t len = buf - key;
       entry = uw_Sqlcache_find(cache, key, len, doBump);
@@ -4790,7 +4790,7 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
         return NULL;
       }
       timeInvalid = uw_Sqlcache_timeMax(timeInvalid, entry->timeInvalid);
-      printf("check level %lu end: %s\n", iLevel, key);
+      // DEBUG: printf("check level %lu end: %s\n", iLevel, key);
     }
     free(key);
   }
@@ -4821,12 +4821,12 @@ static void uw_Sqlcache_storeCommitOne(uw_Sqlcache_Cache *cache, char **keys, uw
     char *buf = key;
     size_t iLevel;
     for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
-      printf("store level %lu start: %s\n", iLevel, key);
+      // DEBUG: printf("store level %lu start: %s\n", iLevel, key);
       size_t iKey;
       for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
-        printf("store level %lu key %lu start: %s\n", iLevel, iKey, key);
+        // DEBUG: printf("store level %lu key %lu start: %s\n", iLevel, iKey, key);
         buf = uw_Sqlcache_keyCopy(buf, keys[cache->keyLevels[iLevel][iKey]]);
-        printf("store level %lu key %lu end: %s\n", iLevel, iKey, key);
+        // DEBUG: printf("store level %lu key %lu end: %s\n", iLevel, iKey, key);
       }
       size_t len = buf - key;
       entry = uw_Sqlcache_find(cache, key, len, 1);
@@ -4837,7 +4837,7 @@ static void uw_Sqlcache_storeCommitOne(uw_Sqlcache_Cache *cache, char **keys, uw
         entry->timeInvalid = 0;
         uw_Sqlcache_add(cache, entry, len);
       }
-      printf("store level %lu end: %s\n", iLevel, key);
+      // DEBUG: printf("store level %lu end: %s\n", iLevel, key);
     }
     free(key);
   }
@@ -4961,22 +4961,23 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
     time_t timeNow = uw_Sqlcache_getTimeNow(cache);
     size_t iLevel;
     for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
-      printf("flush level %lu start: %s\n", iLevel, key);
+      // DEBUG: printf("flush level %lu start: %s\n", iLevel, key);
       char *bufWithinLevel = buf;
       size_t iKey;
       for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
-        printf("flush level %lu key %lu start: %s\n", iLevel, iKey, key);
         // During this entire block, buf is the buffer pointer at the beginning
         // of this level, so if a single key in a level is NULL, we find the
         // entry with keys specified up to the previous level (which is
         // entirely not null if we've reached this point). The plan is for
         // either all or none of the keys in a level to be NULL, but this
         // handles only part of a level being NULL just in case.
+        // DEBUG: printf("flush level %lu key %lu start: %s\n", iLevel, iKey, key);
         char* k = keys[cache->keyLevels[iLevel][iKey]];
         if (!k) {
+          // This is where it's important to have buf instead of bufWithinLevel.
           size_t len = buf - key;
           if (len == 0) {
-            // The first key was null.
+            // A key in the first level is null, so invalidate everything.
             cache->timeInvalid = timeNow;
           } else {
             uw_Sqlcache_Entry *entry = uw_Sqlcache_find(cache, key, len, 0);
@@ -4989,10 +4990,10 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
           return;
         }
         bufWithinLevel = uw_Sqlcache_keyCopy(bufWithinLevel, k);
-        printf("flush level %lu key %lu end: %s\n", iLevel, iKey, key);
+        // DEBUG: printf("flush level %lu key %lu end: %s\n", iLevel, iKey, key);
       }
       buf = bufWithinLevel;
-      printf("flush level %lu end: %s\n", iLevel, key);
+      // DEBUG: printf("flush level %lu end: %s\n", iLevel, key);
     }
     // All the keys were non-null, so we delete the pointed-to entry.
     size_t len = buf - key;

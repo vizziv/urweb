@@ -1603,11 +1603,11 @@ fun keyLevels (numArgs, invs) =
         val stats = List.foldl (ListPair.map op+) zero invs
         val levels =
             (* Sorts levels with most uses first, least uses last. *)
-            List.map IS.listItems
-            o List.rev
+            map IS.listItems
+            o rev
             o IIMM.listItems
             o List.foldl IIMM.insert' IIMM.empty
-            o List.mapi (fn (i, stat) => (stat, i))
+            o ListUtil.mapi (fn (i, stat) => (stat, i))
     in
         levels stats
     end

@@ -1,6 +1,7 @@
 database host=localhost
 sql test.sql
 safeGet Test/flush
+safeGet Test/flush2
 # safeGet Test/flash
 # safeGet Test/floosh
 # safeGet Test/flush17

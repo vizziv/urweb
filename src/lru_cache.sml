@@ -121,10 +121,10 @@ fun setupQuery {index, keyLevels} =
              (* If the output is null, it means we had too much recursion, so it's a miss. *)
              string "  if (v && v->output != NULL) {",
              newline,
-             (* PRINT *)
-             string ("    puts(\"SQLCACHE: hit " ^ i ^ ".\");"),
-             newline,
-             (* /PRINT *)
+             (* DEBUG *)
+             (* string ("    puts(\"SQLCACHE: hit " ^ i ^ ".\");"), *)
+             (* newline, *)
+             (* /DEBUG *)
              string "    uw_write(ctx, v->output);",
              newline,
              string "    uw_write_script(ctx, v->scriptOutput);",
@@ -133,15 +133,15 @@ fun setupQuery {index, keyLevels} =
              newline,
              string "  } else {",
              newline,
-             (* PRINT *)
-             string ("    printf(\"SQLCACHE: miss " ^ i ^ " " ^ String.concatWith ", " (List.tabulate (numKeysTotal, fn _ => "%s")) ^ ".\\n\""),
-             (case argNums of
-                  [] => Print.box []
-                 | _ => Print.box [string ", ",
-                                   p_list string argNums]),
-             string ");",
-             newline,
-             (* /PRINT *)
+             (* DEBUG *)
+             (* string ("    printf(\"SQLCACHE: miss " ^ i ^ " " ^ String.concatWith ", " (List.tabulate (numKeysTotal, fn _ => "%s")) ^ ".\\n\""), *)
+             (* (case argNums of *)
+             (*      [] => Print.box [] *)
+             (*     | _ => Print.box [string ", ", *)
+             (*                       p_list string argNums]), *)
+             (* string ");", *)
+             (* newline, *)
+             (* /DEBUG *)
              string "    uw_recordingStart(ctx);",
              newline,
              string "    return NULL;",
@@ -165,10 +165,10 @@ fun setupQuery {index, keyLevels} =
              newline,
              string "  v->scriptOutput = uw_recordingReadScript(ctx);",
              newline,
-             (* PRINT *)
-             string ("  puts(\"SQLCACHE: stored " ^ i ^ ".\");"),
-             newline,
-             (* /PRINT *)
+             (* DEBUG *)
+             (* string ("  puts(\"SQLCACHE: stored " ^ i ^ ".\");"), *)
+             (* newline, *)
+             (* /DEBUG *)
              string ("  uw_Sqlcache_store(ctx, cache" ^ i ^ ", ks, v);"),
              newline,
              string "  return uw_unit_v;",
@@ -184,10 +184,10 @@ fun setupQuery {index, keyLevels} =
              newline,
              string ("  uw_Sqlcache_flush(ctx, cache" ^ i ^ ", ks);"),
              newline,
-             (* PRINT *)
-             string ("  puts(\"SQLCACHE: flushed " ^ i ^ ".\");"),
-             newline,
-             (* /PRINT *)
+             (* DEBUG *)
+             (* string ("  puts(\"SQLCACHE: flushed " ^ i ^ ".\");"), *)
+             (* newline, *)
+             (* /DEBUG *)
              string "  return uw_unit_v;",
              newline,
              string "}",
