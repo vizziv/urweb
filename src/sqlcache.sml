@@ -660,6 +660,10 @@ end = struct
             (* TODO: make sure these variables are okay to remove from the argument list. *)
             val pureArgs = PS.difference (paths, invalPaths)
             val shouldCache =
+                case #1 exp of
+                    EQuery _ => true
+                  | _ => false
+                (*
                 case getHeuristic () of
                     Smart =>
                     (case (qs, PS.numItems pureArgs) of
@@ -690,6 +694,7 @@ end = struct
                   | NoPureAll => (case qs of [] => false | _ => true)
                   | NoPureOne => (case qs of [] => false | _ => PS.numItems pureArgs = 0)
                   | NoCombo => PS.numItems pureArgs = 0 orelse AM.numItems argsMap = 0
+                *)
         in
             (* Put arguments we might invalidate by first. *)
             if shouldCache
