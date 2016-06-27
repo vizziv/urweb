@@ -1,13 +1,27 @@
-table tab : {Id : int, Val : int, Foo : int} PRIMARY KEY Id
+table tab : {W : int, X : int, Y : int, Z : int, Val : int}
 
-fun cache id foo =
-    res <- oneOrNoRows (SELECT A.Val FROM (tab AS A JOIN tab AS B ON A.Id = B.Id)
-                                     WHERE B.Id = {[id]} AND A.Foo = {[foo]});
+fun cache z x y w =
+    res <- oneOrNoRows1 (SELECT T.Val FROM tab AS T
+                                      WHERE T.W = {[w]}
+                                        AND T.X = {[x]}
+                                        AND T.Y = {[y]}
+                                        AND T.Z = {[z]});
     return <xml><body>
-      cache
+      cache w={[w]} x={[x]} y={[y]} z={[z]}
       {case res of
            None => <xml>?</xml>
-         | Some row => <xml>{[row.A.Val]}</xml>}
+         | Some row => <xml>{[row.Val]}</xml>}
+    </body></xml>
+
+fun flush x y w z =
+    dml (UPDATE tab
+         SET Val = Val * (Val + 2) / Val - 3
+         WHERE W = {[w]}
+           AND X = {[x]}
+           AND Y = {[y]}
+           AND Z = {[z]});
+    return <xml><body>
+      flush w={[w]} x={[x]} y={[y]} z={[z]}
     </body></xml>
 
 (* fun cacheAlt id = *)
@@ -61,14 +75,6 @@ fun cache id foo =
 (*            (Some _, Some _) => <xml>Both are there.</xml> *)
 (*          | _ => <xml>One of them is missing.</xml>} *)
 (*     </body></xml> *)
-
-fun flush id =
-    dml (UPDATE tab
-         SET Val = Val * (Id + 2) / Val - 3
-         WHERE Id = {[id]} OR Id = {[id - 1]} OR Id = {[id + 1]});
-    return <xml><body>
-      Changed {[id]}!
-    </body></xml>
 
 (* fun flash id = *)
 (*     dml (UPDATE tab *)

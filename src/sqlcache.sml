@@ -1039,8 +1039,19 @@ structure ConflictMaps = struct
              (* Here [NONE] means unkown. *)
              fn Sql.SqConst p => SOME (Prim p)
               | Sql.Field tf => SOME (Field tf)
-              | Sql.Inj (EPrim p, _) => SOME (Prim p)
-              | Sql.Inj (ERel n, _) => SOME (rel n)
+              (* FIXME *)
+              | Sql.Inj exp =>
+                let
+                    val msg = case rel 0 of
+                                  QueryArg 0 => "query"
+                                | DmlRel 0 => "dml"
+                                | _ => "wat"
+                in
+                    case #1 (printExp ("Sql.Inj " ^ msg) exp) of
+                        EPrim p => SOME (Prim p)
+                      | ERel n => SOME (rel n)
+                      | _ => NONE
+                end
               (* We can't deal with anything else, e.g., CURRENT_TIMESTAMP
                  becomes Sql.Unmodeled, which becomes NONE here. *)
               | _ => NONE
@@ -1588,7 +1599,9 @@ val atomosToExps = map Invalidations.optionAtomExpToExp
 
 val invalidations = Invalidations.invalidations
 
-fun keyLevels invs = raise Fail "FIXME"
+fun keyLevels (numArgs, invs) =
+    (* TODO: make smarter. *)
+    List.tabulate (numArgs, fn x => [x])
 
 fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state), effs) =
     let
@@ -1623,8 +1636,12 @@ fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state),
             end
           | e' => (e', indexToInvs)
         val (file, indexToInvs) = fileMapfold (fn e => fn s => doExpFlipped s e) file IM.empty
+        fun numArgs i =
+            case IM.find (indexToInvalInfoNumArgs, i) of
+                SOME (_, n) => n
+              | NONE => raise Fail "Sqlcache: addFlushing (c)"
     in
-        ffiInfoRef := map (fn (i, invs) => {index = i, keyLevels = keyLevels invs})
+        ffiInfoRef := map (fn (i, invs) => {index = i, keyLevels = keyLevels (numArgs i, invs)})
                           (IBLMM.listItemsi indexToInvs);
         file
     end

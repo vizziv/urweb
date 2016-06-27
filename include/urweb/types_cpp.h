@@ -145,8 +145,8 @@ typedef struct uw_Sqlcache_Cache {
   uw_Sqlcache_Entry *table;
   unsigned long timeInvalid;
   unsigned long timeNow;
-  size_t **keyLevels;
-  size_t *numKeysInLevel;
+  size_t keyLevels[64][64];
+  size_t numKeysInLevel[64];
   size_t numLevels;
   size_t numKeysTotal; // Sum of numKeysInLevel.
   UT_hash_handle hh;

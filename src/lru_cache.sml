@@ -45,6 +45,7 @@ fun setupQuery {index, keyLevels} =
 
         fun mapSep f sep =
          fn [] => ""
+          | [x] => f x
           | (x :: xs) => f x ^ sep ^ mapSep f sep xs
 
         fun mapSepInit itemi sep =
@@ -62,6 +63,11 @@ fun setupQuery {index, keyLevels} =
         val args = paramRepeat (fn p => "p" ^ p) ", "
 
         val argNums = List.tabulate (numKeysTotal, fn i => "p" ^ Int.toString i)
+
+        fun doKeyLevel (n, level) =
+            [string ("size_t keyLevel" ^ i ^ "_" ^ Int.toString n ^ " = "
+                     ^ showList Int.toString level ^ ";"),
+             newline]
     in
         Print.box
             [string ("static uw_Sqlcache_Cache cacheStruct" ^ i ^ " = {"),
@@ -72,7 +78,7 @@ fun setupQuery {index, keyLevels} =
              newline,
              string "  .table = NULL,",
              newline,
-             string ("  .numKeysTotal = " ^ showList (showList Int.toString) keyLevels ^ ","),
+             string ("  .keyLevels = " ^ showList (showList Int.toString) keyLevels ^ ","),
              newline,
              string ("  .numKeysInLevel = " ^ showList Int.toString numKeysInLevel ^ ","),
              newline,
@@ -82,7 +88,8 @@ fun setupQuery {index, keyLevels} =
              newline,
              string "  .timeInvalid = 0,",
              newline,
-             string "  .timeNow = 0};",
+             (* Anything inserted at the beginning is valid, so start at 1, not 0. *)
+             string "  .timeNow = 1};",
              newline,
              string ("static uw_Sqlcache_Cache *cache" ^ i ^ " = &cacheStruct" ^ i ^ ";"),
              newline,
@@ -104,8 +111,8 @@ fun setupQuery {index, keyLevels} =
              newline,
              newline,
 
-             string ("static uw_Basis_string uw_Sqlcache_check" ^ i),
-             string ("(uw_context ctx" ^ typedArgs ^ ") {"),
+             string ("static uw_Basis_string uw_Sqlcache_check" ^ i
+                     ^ "(uw_context ctx" ^ typedArgs ^ ") {"),
              newline,
              string ("  char *ks[] = {" ^ args ^ "};"),
              newline,
@@ -114,8 +121,10 @@ fun setupQuery {index, keyLevels} =
              (* If the output is null, it means we had too much recursion, so it's a miss. *)
              string "  if (v && v->output != NULL) {",
              newline,
-             (*string ("    puts(\"SQLCACHE: hit " ^ i ^ ".\");"),
-             newline,*)
+             (* PRINT *)
+             string ("    puts(\"SQLCACHE: hit " ^ i ^ ".\");"),
+             newline,
+             (* /PRINT *)
              string "    uw_write(ctx, v->output);",
              newline,
              string "    uw_write_script(ctx, v->scriptOutput);",
@@ -124,13 +133,15 @@ fun setupQuery {index, keyLevels} =
              newline,
              string "  } else {",
              newline,
-             (*string ("    printf(\"SQLCACHE: miss " ^ i ^ " " ^ String.concatWith ", " (List.tabulate (numKeysTotal, fn _ => "%s")) ^ ".\\n\""),
+             (* PRINT *)
+             string ("    printf(\"SQLCACHE: miss " ^ i ^ " " ^ String.concatWith ", " (List.tabulate (numKeysTotal, fn _ => "%s")) ^ ".\\n\""),
              (case argNums of
                   [] => Print.box []
                  | _ => Print.box [string ", ",
                                    p_list string argNums]),
              string ");",
-             newline,*)
+             newline,
+             (* /PRINT *)
              string "    uw_recordingStart(ctx);",
              newline,
              string "    return NULL;",
@@ -141,8 +152,8 @@ fun setupQuery {index, keyLevels} =
              newline,
              newline,
 
-             string ("static uw_unit uw_Sqlcache_store" ^ i),
-             string ("(uw_context ctx, uw_Basis_string s" ^ typedArgs ^ ") {"),
+             string ("static uw_unit uw_Sqlcache_store" ^ i
+                     ^ "(uw_context ctx, uw_Basis_string s" ^ typedArgs ^ ") {"),
              newline,
              string ("  char *ks[] = {" ^ args ^ "};"),
              newline,
@@ -154,8 +165,10 @@ fun setupQuery {index, keyLevels} =
              newline,
              string "  v->scriptOutput = uw_recordingReadScript(ctx);",
              newline,
-             (*string ("  puts(\"SQLCACHE: stored " ^ i ^ ".\");"),
-             newline,*)
+             (* PRINT *)
+             string ("  puts(\"SQLCACHE: stored " ^ i ^ ".\");"),
+             newline,
+             (* /PRINT *)
              string ("  uw_Sqlcache_store(ctx, cache" ^ i ^ ", ks, v);"),
              newline,
              string "  return uw_unit_v;",
@@ -164,15 +177,17 @@ fun setupQuery {index, keyLevels} =
              newline,
              newline,
 
-             string ("static uw_unit uw_Sqlcache_flush" ^ i),
-             string ("(uw_context ctx" ^ typedArgs ^ ") {"),
+             string ("static uw_unit uw_Sqlcache_flush" ^ i
+                     ^ "(uw_context ctx" ^ typedArgs ^ ") {"),
              newline,
              string ("  char *ks[] = {" ^ args ^ "};"),
              newline,
              string ("  uw_Sqlcache_flush(ctx, cache" ^ i ^ ", ks);"),
              newline,
-             (*string ("  puts(\"SQLCACHE: flushed " ^ i ^ ".\");"),
-             newline,*)
+             (* PRINT *)
+             string ("  puts(\"SQLCACHE: flushed " ^ i ^ ".\");"),
+             newline,
+             (* /PRINT *)
              string "  return uw_unit_v;",
              newline,
              string "}",
