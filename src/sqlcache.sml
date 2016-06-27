@@ -1593,8 +1593,24 @@ val atomosToExps = map Invalidations.optionAtomExpToExp
 val invalidations = Invalidations.invalidations
 
 fun keyLevels (numArgs, invs) =
-    (* TODO: make smarter. *)
-    List.tabulate (numArgs, fn x => [x])
+    (* If there is an optimal level split, this heuristic finds it. *)
+    (* TODO: add a last step that splits up levels in the non-optimal case. *)
+    let
+        val invs = map (map (fn true => 1 | false => 0)) (BLS.listItems invs)
+        val zero = List.tabulate (numArgs, fn _ => 0)
+        (* Element i of [stats] is the number of times we know key i when
+           invalidating. *)
+        val stats = List.foldl (ListPair.map op+) zero invs
+        val levels =
+            (* Sorts levels with most uses first, least uses last. *)
+            List.map IS.listItems
+            o List.rev
+            o IIMM.listItems
+            o List.foldl IIMM.insert' IIMM.empty
+            o List.mapi (fn (i, stat) => (stat, i))
+    in
+        levels stats
+    end
 
 fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state), effs) =
     let

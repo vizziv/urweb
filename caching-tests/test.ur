@@ -1,6 +1,6 @@
 table tab : {W : int, X : int, Y : int, Z : int, Val : int}
 
-fun cache y w z x =
+fun cache w x y z =
     res <- oneOrNoRows1 (SELECT T.Val FROM tab AS T
                                       WHERE T.W = {[w]}
                                         AND T.X = {[x]}
@@ -13,11 +13,10 @@ fun cache y w z x =
          | Some row => <xml>{[row.Val]}</xml>}
     </body></xml>
 
-fun flush x y w z =
+fun flush w x y z =
     dml (UPDATE tab
          SET Val = Val * (Val + 2) / Val - 3
          WHERE W = {[w]}
-           AND X = {[x]}
            AND Y = {[y]}
            AND Z = {[z]});
     return <xml><body>
