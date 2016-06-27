@@ -1,6 +1,6 @@
 table tab : {W : int, X : int, Y : int, Z : int, Val : int}
 
-fun cache z x y w =
+fun cache y w z x =
     res <- oneOrNoRows1 (SELECT T.Val FROM tab AS T
                                       WHERE T.W = {[w]}
                                         AND T.X = {[x]}

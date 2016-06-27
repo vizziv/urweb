@@ -628,6 +628,7 @@ end = struct
         IM.foldl AS.add' AS.empty subst
 
     fun sqlArgsMap (qs : t) =
+        (* TODO: verify that AM.map traversal order is deterministic. *)
         let
             val args =
                 List.foldl (fn ((q, subst), acc) =>
@@ -660,10 +661,6 @@ end = struct
             (* TODO: make sure these variables are okay to remove from the argument list. *)
             val pureArgs = PS.difference (paths, invalPaths)
             val shouldCache =
-                case #1 exp of
-                    EQuery _ => true
-                  | _ => false
-                (*
                 case getHeuristic () of
                     Smart =>
                     (case (qs, PS.numItems pureArgs) of
@@ -693,8 +690,7 @@ end = struct
                   | Never => (case qs of [_] => PS.numItems pureArgs = 0 | _ => false)
                   | NoPureAll => (case qs of [] => false | _ => true)
                   | NoPureOne => (case qs of [] => false | _ => PS.numItems pureArgs = 0)
-                  | NoCombo => PS.numItems pureArgs = 0 orelse AM.numItems argsMap = 0
-                *)
+                  | NoCombo => PS.numItems pureArgs = 0 orelse List.null args
         in
             (* Put arguments we might invalidate by first. *)
             if shouldCache
@@ -707,7 +703,7 @@ end = struct
     fun query (qs : t) =
         let
             val argsMap = sqlArgsMap qs
-            fun substitute subst =
+            fun substituteExp' subst =
              fn ERel n => IM.find (subst, n)
                           <\obind\>
                            (fn arg =>
@@ -715,24 +711,16 @@ end = struct
                                <\obind\>
                                 (fn n' => SOME (ERel n')))
               | _ => raise Fail "Sqlcache: query (a)"
+            fun substituteQuery (q, subst) =
+                case omapQuery (substituteExp' subst) q of
+                    SOME q => q
+                  | NONE => raise Fail "Sqlcache: query (b)"
         in
-            case (map #1 qs) of
-                (q :: qs) =>
-                let
-                    val q = List.foldl Sql.Union q qs
-                    val ns = IS.listItems (varsOfQuery q)
-                    val rename =
-                     fn ERel n => omap ERel (indexOf (fn n' => n' = n) ns)
-                      | _ => raise Fail "Sqlcache: query (b)"
-                in
-                    case omapQuery rename q of
-                        SOME q => q
-                      (* We should never get NONE because indexOf should never fail. *)
-                      | NONE => raise Fail "Sqlcache: query (c)"
-                end
+            case map substituteQuery qs of
+                (q :: qs) => List.foldl Sql.Union q qs
               (* We should never reach this case because [updateState] won't
                  put anything in the state if there are no queries. *)
-              | [] => raise Fail "Sqlcache: query (d)"
+              | [] => raise Fail "Sqlcache: query (c)"
         end
 
     val argOfExp =
