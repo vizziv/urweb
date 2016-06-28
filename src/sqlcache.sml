@@ -1032,19 +1032,8 @@ structure ConflictMaps = struct
              (* Here [NONE] means unkown. *)
              fn Sql.SqConst p => SOME (Prim p)
               | Sql.Field tf => SOME (Field tf)
-              (* FIXME *)
-              | Sql.Inj exp =>
-                let
-                    val msg = case rel 0 of
-                                  QueryArg 0 => "query"
-                                | DmlRel 0 => "dml"
-                                | _ => "wat"
-                in
-                    case #1 (printExp ("Sql.Inj " ^ msg) exp) of
-                        EPrim p => SOME (Prim p)
-                      | ERel n => SOME (rel n)
-                      | _ => NONE
-                end
+              | Sql.Inj (EPrim p, _) => SOME (Prim p)
+              | Sql.Inj (ERel n, _) => SOME (rel n)
               (* We can't deal with anything else, e.g., CURRENT_TIMESTAMP
                  becomes Sql.Unmodeled, which becomes NONE here. *)
               | _ => NONE

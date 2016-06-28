@@ -439,6 +439,12 @@ typedef struct uw_Sqlcache_Unlock {
   struct uw_Sqlcache_Unlock *next;
 } uw_Sqlcache_Unlock;
 
+typedef struct uw_Sqlcache_Autotune {
+  uw_Sqlcache_Cache *cache;
+  int *isActive;
+  struct uw_Sqlcache_Autotune *next;
+} uw_Sqlcache_Autotune;
+
 struct uw_context {
   uw_app *app;
   int id;
@@ -506,9 +512,11 @@ struct uw_context {
   // Sqlcache.
   int numRecording, recordingCapacity;
   int *recordingOffsets, *scriptRecordingOffsets;
+  int isCacheCommitRegistered;
   uw_Sqlcache_Update *cacheUpdate;
   uw_Sqlcache_Update *cacheUpdateTail;
   uw_Sqlcache_Unlock *cacheUnlock;
+  uw_Sqlcache_Autotune *cacheAutotune;
 
   int remoteSock;
 };
@@ -4868,6 +4876,7 @@ static void uw_Sqlcache_commit(void *data) {
 
 static void uw_Sqlcache_free(void *data, int dontCare) {
   uw_context ctx = (uw_context)data;
+  // Updates.
   uw_Sqlcache_Update *update = ctx->cacheUpdate;
   while (update) {
     char** keys = update->keys;
@@ -4883,6 +4892,7 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
   }
   ctx->cacheUpdate = NULL;
   ctx->cacheUpdateTail = NULL;
+  // Unlocks.
   uw_Sqlcache_Unlock *unlock = ctx->cacheUnlock;
   while (unlock) {
     pthread_rwlock_unlock(unlock->lock);
@@ -4891,13 +4901,32 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
     unlock = nextUnlock;
   }
   ctx->cacheUnlock = NULL;
+  // Autotunes.
+  // Everything is here rather than in [uw_Sqlcache_commit] because:
+  //   (1) We need write permissions on the activation lock, but we have read
+  //       permissions during [uw_Sqlcache_commit].
+  //   (2) It's fine to change activation even if a transaction doesn't commit.
+  uw_Sqlcache_Autotune *autotune = ctx->cacheAutotune;
+  while (autotune) {
+    // TODO: activate or deactivate cache.
+    uw_Sqlcache_Autotune *nextAutotune = autotune->next;
+    free(autotune);
+    autotune = nextAutotune;
+  }
+  ctx->cacheAutotune = NULL;
+  // We're done!
+  ctx->isCacheCommitRegistered = 0;
+}
+
+static void uw_Sqlcache_registerCommit(uw_context ctx) {
+  if (!ctx->isCacheCommitRegistered) {
+    ctx->isCacheCommitRegistered = 1;
+    uw_register_transactional(ctx, ctx, uw_Sqlcache_commit, NULL, uw_Sqlcache_free);
+  }
 }
 
 static void uw_Sqlcache_pushUnlock(uw_context ctx, pthread_rwlock_t *lock) {
-  if (!ctx->cacheUnlock) {
-    // Just need one registered commit for both updating and unlocking.
-    uw_register_transactional(ctx, ctx, uw_Sqlcache_commit, NULL, uw_Sqlcache_free);
-  }
+  uw_Sqlcache_registerCommit(ctx);
   uw_Sqlcache_Unlock *unlock = malloc(sizeof(uw_Sqlcache_Unlock));
   unlock->lock = lock;
   unlock->next = ctx->cacheUnlock;
@@ -4936,6 +4965,10 @@ void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw
   pthread_rwlock_rdlock(&cache->lockIn);
   value->timeValid = cache->timeNow;
   pthread_rwlock_unlock(&cache->lockIn);
+  // We should have already registered a commmit already because we should have
+  // already pushed an unlock, but calling this again just in case things
+  // change in the future.
+  uw_Sqlcache_registerCommit(ctx);
   if (ctx->cacheUpdateTail) {
     ctx->cacheUpdateTail->next = update;
   } else {
