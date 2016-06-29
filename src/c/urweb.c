@@ -441,7 +441,7 @@ typedef struct uw_Sqlcache_Unlock {
 
 typedef struct uw_Sqlcache_Autotune {
   uw_Sqlcache_Cache *cache;
-  int *isActive;
+  uw_Basis_bool isDeactivated;
   struct uw_Sqlcache_Autotune *next;
 } uw_Sqlcache_Autotune;
 
@@ -606,12 +606,13 @@ uw_context uw_init(int id, uw_loggers *lg) {
   ctx->recordingCapacity = 0;
   ctx->recordingOffsets = malloc(0);
   ctx->scriptRecordingOffsets = malloc(0);
-  ctx->cacheUpdate = NULL;
-  ctx->cacheUpdateTail = NULL;
 
   ctx->remoteSock = -1;
 
+  ctx->cacheUpdate = NULL;
+  ctx->cacheUpdateTail = NULL;
   ctx->cacheUnlock = NULL;
+  ctx->cacheAutotune = NULL;
 
   return ctx;
 }
@@ -4724,7 +4725,6 @@ static void uw_Sqlcache_add(uw_Sqlcache_Cache *cache, uw_Sqlcache_Entry *entry, 
 }
 
 static unsigned long uw_Sqlcache_getTimeNow(uw_Sqlcache_Cache *cache) {
-  // TODO: verify that this makes time comparisons do the Right Thing.
   return cache->timeNow++;
 }
 
@@ -4760,27 +4760,65 @@ static char *uw_Sqlcache_keyCopy(char *buf, char *key) {
   return stpcpy(buf, key);
 }
 
+// Sensitivity must be between 0 and 1 (exclusive), should be much closer to 0.
+// (Using 256 as a denominator is arbitrary.)
+static double uw_Sqlcache_ratioSensitivity = 0.00390625; // 1/256
+static double uw_Sqlcache_ratioThreshold = 0.66015625; // 169/256
+static double uw_Sqlcache_ratioActivateReset = 1.0;
+static double uw_Sqlcache_ratioDeactivateReset = 0.5;
+
+static void uw_Sqlcache_pushAutotune(uw_context ctx,
+                                     uw_Sqlcache_Cache *cache,
+                                     uw_Basis_bool isDeactivated) {
+  cache->inLimbo = 1;
+  uw_Sqlcache_Autotune *autotune = calloc(1, sizeof(uw_Sqlcache_Autotune));
+  autotune->cache = cache;
+  autotune->isDeactivated = isDeactivated;
+  autotune->next = ctx->cacheAutotune;
+  ctx->cacheAutotune = autotune;
+}
+
+static void uw_Sqlcache_recordMiss(uw_context ctx, uw_Sqlcache_Cache *cache) {
+  // Nudges towards 0.
+  cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
+  if (!cache->inLimbo
+      && !cache->isDeactivated
+      && cache->hitRatio < uw_Sqlcache_ratioThreshold) {
+    uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_True);
+  }
+}
+
+static void uw_Sqlcache_recordHit(uw_context ctx, uw_Sqlcache_Cache *cache) {
+  // Nudges towards 1.
+  cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
+  cache->hitRatio += uw_Sqlcache_ratioSensitivity;
+  if (!cache->inLimbo
+      && cache->isDeactivated
+      && cache->hitRatio > uw_Sqlcache_ratioThreshold) {
+    uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_False);
+  }
+}
+
 // The NUL-terminated prefix of [key] below always looks something like "_k1_k2_k3..._kn".
 
 uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
+  // Even when deactivated, occasionally do a dry run to update the hit ratio.
+  if (cache->isDeactivated && random() % 1024 != 0) {
+    return NULL;
+  }
   int doBump = random() % 1024 == 0;
   if (doBump) {
     pthread_rwlock_wrlock(&cache->lockIn);
   } else {
     pthread_rwlock_rdlock(&cache->lockIn);
   }
-  char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
-  char *buf = key;
   time_t timeInvalid = cache->timeInvalid;
   uw_Sqlcache_Entry *entry = NULL;
   if (cache->numLevels == 0) {
     entry = cache->table;
-    if (!entry) {
-      free(key);
-      pthread_rwlock_unlock(&cache->lockIn);
-      return NULL;
-    }
   } else {
+    char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
+    char *buf = key;
     size_t iLevel;
     for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
       // DEBUG: printf("check level %lu start: %s\n", iLevel, key);
@@ -4793,22 +4831,47 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
       size_t len = buf - key;
       entry = uw_Sqlcache_find(cache, key, len, doBump);
       if (!entry) {
-        free(key);
-        pthread_rwlock_unlock(&cache->lockIn);
-        return NULL;
+        break;
       }
       timeInvalid = uw_Sqlcache_timeMax(timeInvalid, entry->timeInvalid);
       // DEBUG: printf("check level %lu end: %s\n", iLevel, key);
     }
     free(key);
   }
-  uw_Sqlcache_Value *value = entry->value;
+  uw_Sqlcache_Value *value = NULL;
+  if (entry) {
+    value = entry->value;
+  }
+  // Returning value outside the lock is safe because this function is called
+  // and its result used while holding read permissions on [cache->lockOut],
+  // while updates happen while holding write permissions on [cache->lockOut].
   pthread_rwlock_unlock(&cache->lockIn);
-  // ASK: though the argument isn't trivial, this is safe, right?
-  // Returning outside the lock is safe because updates happen at commit time.
-  // Those are the only times the returned value or its strings can get freed.
-  // Handler output is a new string, so it's safe to free this at commit time.
-  return value && timeInvalid < value->timeValid ? value : NULL;
+  // We only record a miss if there's a value that's invalid. If a value is
+  // absent, it's because the cache is warming up, which we don't want to count
+  // against it.
+  if (value) {
+    if (timeInvalid < value->timeValid) {
+      if (cache->isDeactivated) {
+        uw_Sqlcache_recordHit(ctx, cache);
+        return NULL;
+      }
+      if (!value->result) {
+        // If [value->result] is null, then not only can we not use it, but
+        // this value is actually invalid because it was made when the cache
+        // was deactivated. This value should be about to get replaced, but
+        // just in case, we'll mark this fact to accurately reflect a miss next
+        // time.
+        pthread_rwlock_wrlock(&cache->lockIn);
+        value->timeValid = 0;
+        pthread_rwlock_unlock(&cache->lockIn);
+        return NULL;
+      }
+      uw_Sqlcache_recordHit(ctx, cache);
+      return value;
+    }
+    uw_Sqlcache_recordMiss(ctx, cache);
+  }
+  return NULL;
 }
 
 static void uw_Sqlcache_storeCommitOne(uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
@@ -4908,7 +4971,15 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
   //   (2) It's fine to change activation even if a transaction doesn't commit.
   uw_Sqlcache_Autotune *autotune = ctx->cacheAutotune;
   while (autotune) {
-    // TODO: activate or deactivate cache.
+    uw_Sqlcache_Cache *cache = autotune->cache;
+    pthread_rwlock_wrlock(&cache->lockActivation);
+    cache->inLimbo = 0;
+    cache->isDeactivated = autotune->isDeactivated;
+    cache->hitRatio =
+      cache->isDeactivated
+      ? uw_Sqlcache_ratioDeactivateReset
+      : uw_Sqlcache_ratioActivateReset;
+    pthread_rwlock_unlock(&cache->lockActivation);
     uw_Sqlcache_Autotune *nextAutotune = autotune->next;
     free(autotune);
     autotune = nextAutotune;
@@ -4954,6 +5025,10 @@ static char **uw_Sqlcache_copyKeys(uw_Sqlcache_Cache *cache, char **keys) {
 }
 
 void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
+  if (cache->isDeactivated) {
+    uw_Sqlcache_storeCommitOne(cache, keys, value);
+    return;
+  }
   uw_Sqlcache_Update *update = malloc(sizeof(uw_Sqlcache_Update));
   update->cache = cache;
   update->keys = uw_Sqlcache_copyKeys(cache, keys);
@@ -4982,16 +5057,13 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
   // This is safe to do because we will always call [uw_Sqlcache_wlock] earlier.
   // If the transaction fails, the only harm done is a few extra cache misses.
   pthread_rwlock_wrlock(&cache->lockIn);
+  time_t timeNow = uw_Sqlcache_getTimeNow(cache);
+  uw_Sqlcache_Entry *entry = NULL;
   if (cache->numLevels == 0) {
-    uw_Sqlcache_Entry *entry = cache->table;
-    if (entry) {
-      uw_Sqlcache_freeValue(entry->value);
-      entry->value = NULL;
-    }
+    entry = cache->table;
   } else {
     char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
     char *buf = key;
-    time_t timeNow = uw_Sqlcache_getTimeNow(cache);
     size_t iLevel;
     for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
       // DEBUG: printf("flush level %lu start: %s\n", iLevel, key);
@@ -5012,15 +5084,18 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
           if (len == 0) {
             // A key in the first level is null, so invalidate everything.
             cache->timeInvalid = timeNow;
+            free(key);
+            pthread_rwlock_unlock(&cache->lockIn);
+            return;
           } else {
             uw_Sqlcache_Entry *entry = uw_Sqlcache_find(cache, key, len, 0);
             if (entry) {
               entry->timeInvalid = timeNow;
             }
+            free(key);
+            pthread_rwlock_unlock(&cache->lockIn);
+            return;
           }
-          free(key);
-          pthread_rwlock_unlock(&cache->lockIn);
-          return;
         }
         bufWithinLevel = uw_Sqlcache_keyCopy(bufWithinLevel, k);
         // DEBUG: printf("flush level %lu key %lu end: %s\n", iLevel, iKey, key);
@@ -5028,11 +5103,15 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
       buf = bufWithinLevel;
       // DEBUG: printf("flush level %lu end: %s\n", iLevel, key);
     }
-    // All the keys were non-null, so we delete the pointed-to entry.
+    // All the keys were non-null, so we mark the pointed-to entry as invalid.
+    // (We used to just delete it, but thanks to autotuning, we now care about
+    // the distinction between previously absent and invalidated.)
     size_t len = buf - key;
-    uw_Sqlcache_Entry *entry = uw_Sqlcache_find(cache, key, len, 0);
+    entry = uw_Sqlcache_find(cache, key, len, 0);
     free(key);
-    uw_Sqlcache_delete(cache, entry);
+  }
+  if (entry) {
+    entry->timeInvalid = timeNow;
   }
   pthread_rwlock_unlock(&cache->lockIn);
 }

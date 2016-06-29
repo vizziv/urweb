@@ -8,9 +8,19 @@ end = struct
 open Mono
 
 val dummyLoc = ErrorMsg.dummySpan
-val stringTyp = (TFfi ("Basis", "string"), dummyLoc)
+fun ffiTyp name = (TFfi ("Basis", name), dummyLoc)
+val stringTyp = ffiTyp "string"
 val optionStringTyp = (TOption stringTyp, dummyLoc)
 fun withTyp typ = map (fn exp => (exp, typ))
+
+fun ffiPatBool b =
+    (PCon (Enum,
+           PConFfi {mod = "Basis",
+                    datatyp = "bool",
+                    con = if b then "True" else "False",
+                    arg = NONE},
+           NONE),
+     dummyLoc)
 
 fun ffiAppCache' (func, index, argTyps) =
     EFfiApp ("Sqlcache", func ^ Int.toString index, argTyps)
@@ -19,7 +29,16 @@ fun check (index, keys) =
     ffiAppCache' ("check", index, withTyp stringTyp keys)
 
 fun store (index, keys, value) =
-    ffiAppCache' ("store", index, (value, stringTyp) :: withTyp stringTyp keys)
+    let
+        fun ffiStore v =
+            (ffiAppCache' ("store", index, (v, optionStringTyp) :: withTyp stringTyp keys),
+             dummyLoc)
+    in
+        ECase ((ffiAppCache' ("isDeactivated", index, []), dummyLoc),
+               [(ffiPatBool true, ffiStore (ENone stringTyp, dummyLoc)),
+                (ffiPatBool false, ffiStore (ESome (stringTyp, value), dummyLoc))],
+               {disc = ffiTyp "bool", result = ffiTyp "unit"})
+    end
 
 fun flush (index, keys) =
     ffiAppCache' ("flush", index, withTyp optionStringTyp keys)
@@ -95,6 +114,14 @@ fun setupQuery {index, keyLevels} =
              newline,
              newline,
 
+             string ("static uw_Basis_bool uw_Sqlcache_isDeactivated" ^ i ^ "(uw_context ctx) {"),
+             newline,
+             string ("  return cache" ^ i ^ "->isDeactivated;"),
+             newline,
+             string "}",
+             newline,
+             newline,
+
              string ("static void uw_Sqlcache_rlock" ^ i ^ "(uw_context ctx) {"),
              newline,
              string ("  uw_Sqlcache_rlock(ctx, cache" ^ i ^ ");"),
@@ -159,7 +186,7 @@ fun setupQuery {index, keyLevels} =
              newline,
              string ("  uw_Sqlcache_Value *v = malloc(sizeof(uw_Sqlcache_Value));"),
              newline,
-             string "  v->result = strdup(s);",
+             string "  v->result = s ? strdup(s) : NULL;",
              newline,
              string "  v->output = uw_recordingRead(ctx);",
              newline,
