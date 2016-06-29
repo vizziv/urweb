@@ -4781,11 +4781,11 @@ static void uw_Sqlcache_pushAutotune(uw_context ctx,
 static void uw_Sqlcache_recordMiss(uw_context ctx, uw_Sqlcache_Cache *cache) {
   // Nudges towards 0.
   cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
-  printf("AUTOTUNE: hit ratio dec: %f\n", cache->hitRatio);
+  // DEBUG: printf("AUTOTUNE: hit ratio dec: %f\n", cache->hitRatio);
   if (!cache->inLimbo
       && !cache->isDeactivated
       && cache->hitRatio < uw_Sqlcache_ratioThreshold) {
-    printf("AUTOTUNE: cache deactivating\n");
+    // DEBUG: printf("AUTOTUNE: cache deactivating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_True);
   }
 }
@@ -4794,11 +4794,11 @@ static void uw_Sqlcache_recordHit(uw_context ctx, uw_Sqlcache_Cache *cache) {
   // Nudges towards 1.
   cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
   cache->hitRatio += uw_Sqlcache_ratioSensitivity;
-  printf("AUTOTUNE: hit ratio inc: %f\n", cache->hitRatio);
+  // DEBUG: printf("AUTOTUNE: hit ratio inc: %f\n", cache->hitRatio);
   if (!cache->inLimbo
       && cache->isDeactivated
       && cache->hitRatio > uw_Sqlcache_ratioThreshold) {
-    printf("AUTOTUNE: cache activating\n");
+    // DEBUG: printf("AUTOTUNE: cache activating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_False);
   }
 }
@@ -4876,9 +4876,8 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
       }
       uw_Sqlcache_recordHit(ctx, cache);
       return value;
-    }
-    // If [timeInvalid <= cache->timeRefreshed], then the cache is warming up.
-    if (timeInvalid > cache->timeRefreshed) {
+    } else if (timeInvalid > cache->timeRefreshed) {
+      // If [timeInvalid <= cache->timeRefreshed], then the cache is warming up.
       uw_Sqlcache_recordMiss(ctx, cache);
     }
   }
@@ -5051,6 +5050,12 @@ static char **uw_Sqlcache_copyKeys(uw_Sqlcache_Cache *cache, char **keys) {
 }
 
 void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
+  // Can't use [uw_Sqlcache_getTimeNow] because it modifies state and we don't
+  // have the lock. Releasing the read inner lock leads to correct behavior
+  // because the outer lock stops updates from happening.
+  pthread_rwlock_rdlock(&cache->lockIn);
+  value->timeValid = cache->timeNow;
+  pthread_rwlock_unlock(&cache->lockIn);
   if (cache->isDeactivated) {
     uw_Sqlcache_storeCommitOne(cache, keys, value);
     return;
@@ -5060,12 +5065,6 @@ void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw
   update->keys = uw_Sqlcache_copyKeys(cache, keys);
   update->value = value;
   update->next = NULL;
-  // Can't use [uw_Sqlcache_getTimeNow] because it modifies state and we don't
-  // have the lock. Releasing the read inner lock leads to correct behavior
-  // because the outer lock stops updates from happening.
-  pthread_rwlock_rdlock(&cache->lockIn);
-  value->timeValid = cache->timeNow;
-  pthread_rwlock_unlock(&cache->lockIn);
   // We should have already registered a commmit already because we should have
   // already pushed an unlock, but calling this again just in case things
   // change in the future.
