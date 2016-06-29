@@ -146,7 +146,7 @@ typedef struct uw_Sqlcache_Cache {
   pthread_rwlock_t lockIn;
   uw_Sqlcache_Entry *table;
   unsigned long timeInvalid;
-  unsigned long timeDeactivated;
+  unsigned long timeRefreshed;
   unsigned long timeNow;
   // TODO: check there are fewer than 64 of these somewhere?
   size_t keyLevels[64][64];
