@@ -4859,6 +4859,10 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
         uw_Sqlcache_recordHit(ctx, cache);
         return NULL;
       }
+      // The following block should never execute (as it once may have) because
+      // no values with null results are inserted into the cache while it's
+      // activated, and we always invalidate when activating. But if we were to
+      // have a null result, this is what we'd want to do, so leaving this in.
       if (!value->result) {
         // If [value->result] is null, then not only can we not use it, but
         // this value is actually invalid because it was made when the cache
@@ -4873,12 +4877,17 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
       uw_Sqlcache_recordHit(ctx, cache);
       return value;
     }
-    uw_Sqlcache_recordMiss(ctx, cache);
+    // If [timeInvalid <= cache->timeRefreshed], then the cache is warming up.
+    if (timeInvalid > cache->timeRefreshed) {
+      uw_Sqlcache_recordMiss(ctx, cache);
+    }
   }
   return NULL;
 }
 
-static void uw_Sqlcache_storeCommitOne(uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
+static void uw_Sqlcache_storeCommitOne(uw_Sqlcache_Cache *cache,
+                                       char **keys,
+                                       uw_Sqlcache_Value *value) {
   pthread_rwlock_wrlock(&cache->lockIn);
   time_t timeNow = uw_Sqlcache_getTimeNow(cache);
   uw_Sqlcache_Entry *entry = NULL;
@@ -4976,6 +4985,8 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
   uw_Sqlcache_Autotune *autotune = ctx->cacheAutotune;
   while (autotune) {
     uw_Sqlcache_Cache *cache = autotune->cache;
+    // Write permisison on the activation lock is the strongest possible
+    // permission, so no more locking is needed in here.
     pthread_rwlock_wrlock(&cache->lockActivation);
     cache->inLimbo = 0;
     cache->isDeactivated = autotune->isDeactivated;
@@ -4983,6 +4994,9 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
       cache->isDeactivated
       ? uw_Sqlcache_ratioDeactivateReset
       : uw_Sqlcache_ratioActivateReset;
+    time_t timeNow = uw_Sqlcache_getTimeNow(cache);
+    cache->timeInvalid = timeNow;
+    cache->timeRefreshed = timeNow;
     pthread_rwlock_unlock(&cache->lockActivation);
     uw_Sqlcache_Autotune *nextAutotune = autotune->next;
     free(autotune);

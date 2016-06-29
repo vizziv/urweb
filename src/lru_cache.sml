@@ -101,6 +101,8 @@ fun setupQuery {index, keyLevels} =
              newline,
              string "  .timeInvalid = 0,",
              newline,
+             string "  .timeRefreshed = 0,",
+             newline,
              (* Anything inserted at the beginning is valid, so start at 1, not 0. *)
              string "  .timeNow = 1,",
              newline,
@@ -192,13 +194,19 @@ fun setupQuery {index, keyLevels} =
              newline,
              string ("  char *ks[] = {" ^ args ^ "};"),
              newline,
-             string ("  uw_Sqlcache_Value *v = malloc(sizeof(uw_Sqlcache_Value));"),
+             string ("  uw_Sqlcache_Value *v = calloc(1, sizeof(uw_Sqlcache_Value));"),
              newline,
-             string "  v->result = s ? strdup(s) : NULL;",
+             (* [s] is null if and only if the cache is deactivated, in which
+                case all of these three end up null because of [calloc]. *)
+             string "  if(s) {",
              newline,
-             string "  v->output = uw_recordingRead(ctx);",
+             string "    v->result = strdup(s);",
              newline,
-             string "  v->scriptOutput = uw_recordingReadScript(ctx);",
+             string "    v->output = uw_recordingRead(ctx);",
+             newline,
+             string "    v->scriptOutput = uw_recordingReadScript(ctx);",
+             newline,
+             string "  }",
              newline,
              (* DEBUG *)
              (* string ("  puts(\"SQLCACHE: stored " ^ i ^ ".\");"), *)
