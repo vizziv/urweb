@@ -4781,9 +4781,11 @@ static void uw_Sqlcache_pushAutotune(uw_context ctx,
 static void uw_Sqlcache_recordMiss(uw_context ctx, uw_Sqlcache_Cache *cache) {
   // Nudges towards 0.
   cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
+  printf("AUTOTUNE: hit ratio dec: %f\n", cache->hitRatio);
   if (!cache->inLimbo
       && !cache->isDeactivated
       && cache->hitRatio < uw_Sqlcache_ratioThreshold) {
+    printf("AUTOTUNE: cache deactivating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_True);
   }
 }
@@ -4792,9 +4794,11 @@ static void uw_Sqlcache_recordHit(uw_context ctx, uw_Sqlcache_Cache *cache) {
   // Nudges towards 1.
   cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
   cache->hitRatio += uw_Sqlcache_ratioSensitivity;
+  printf("AUTOTUNE: hit ratio inc: %f\n", cache->hitRatio);
   if (!cache->inLimbo
       && cache->isDeactivated
       && cache->hitRatio > uw_Sqlcache_ratioThreshold) {
+    printf("AUTOTUNE: cache activating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_False);
   }
 }
@@ -5005,13 +5009,21 @@ static void uw_Sqlcache_pushUnlock(uw_context ctx, pthread_rwlock_t *lock) {
 }
 
 void uw_Sqlcache_rlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
-  pthread_rwlock_rdlock(&cache->lockOut);
-  uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
+  pthread_rwlock_rdlock(&cache->lockActivation);
+  uw_Sqlcache_pushUnlock(ctx, &cache->lockActivation);
+  if (!cache->isDeactivated) {
+    pthread_rwlock_rdlock(&cache->lockOut);
+    uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
+  }
 }
 
 void uw_Sqlcache_wlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
-  pthread_rwlock_wrlock(&cache->lockOut);
-  uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
+  pthread_rwlock_rdlock(&cache->lockActivation);
+  uw_Sqlcache_pushUnlock(ctx, &cache->lockActivation);
+  if (!cache->isDeactivated) {
+    pthread_rwlock_wrlock(&cache->lockOut);
+    uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
+  }
 }
 
 static char **uw_Sqlcache_copyKeys(uw_Sqlcache_Cache *cache, char **keys) {
