@@ -4785,7 +4785,7 @@ static void uw_Sqlcache_recordMiss(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!cache->inLimbo
       && !cache->isDeactivated
       && cache->hitRatio < uw_Sqlcache_ratioThreshold) {
-    // DEBUG: printf("AUTOTUNE: cache deactivating\n");
+    printf("AUTOTUNE: cache deactivating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_True);
   }
 }
@@ -4798,7 +4798,7 @@ static void uw_Sqlcache_recordHit(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!cache->inLimbo
       && cache->isDeactivated
       && cache->hitRatio > uw_Sqlcache_ratioThreshold) {
-    // DEBUG: printf("AUTOTUNE: cache activating\n");
+    printf("AUTOTUNE: cache activating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_False);
   }
 }

@@ -1603,10 +1603,12 @@ fun keyLevels (numArgs, invs) =
 
 fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state), effs) =
     let
+        val indexToInvsStart = IM.map (fn _ => BLS.empty) indexToInvalInfoNumArgs
         val flushes = List.concat
                       o map (fn (i, argss) => map (fn args => flush (i, atomosToExps args)) argss)
         fun updateFfiInfos ((i, argss), indexToInvs) =
             let
+                val () = Print.preface ("FIXME: " ^ Int.toString i, Print.space)
                 fun update (args, indexToInvs) = IBLMM.insert (indexToInvs, i, map isSome args)
             in
                 List.foldl update indexToInvs argss
@@ -1633,7 +1635,7 @@ fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state),
                                   List.foldl updateFfiInfos indexToInvs invs)
             end
           | e' => (e', indexToInvs)
-        val (file, indexToInvs) = fileMapfold (fn e => fn s => doExpFlipped s e) file IM.empty
+        val (file, indexToInvs) = fileMapfold (fn e => fn s => doExpFlipped s e) file indexToInvsStart
         fun numArgs i =
             case IM.find (indexToInvalInfoNumArgs, i) of
                 SOME (_, n) => n
