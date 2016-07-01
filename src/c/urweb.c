@@ -4780,7 +4780,7 @@ static void uw_Sqlcache_pushAutotune(uw_context ctx,
   ctx->cacheAutotune = autotune;
 }
 
-static void uw_Sqlcache_recordMiss(uw_context ctx, uw_Sqlcache_Cache *cache) {
+static void uw_Sqlcache_recordFlush(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!uw_Sqlcache_amAutotuning) {
     return;
   }
@@ -4869,33 +4869,9 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
   // We only record a miss if there's a value that's invalid. If a value is
   // absent, it's because the cache is warming up, which we don't want to count
   // against it.
-  if (value) {
-    if (timeInvalid < value->timeValid) {
-      if (cache->isDeactivated) {
-        uw_Sqlcache_recordHit(ctx, cache);
-        return NULL;
-      }
-      // The following block should never execute (as it once may have) because
-      // no values with null results are inserted into the cache while it's
-      // activated, and we always invalidate when activating. But if we were to
-      // have a null result, this is what we'd want to do, so leaving this in.
-      if (!value->result) {
-        // If [value->result] is null, then not only can we not use it, but
-        // this value is actually invalid because it was made when the cache
-        // was deactivated. This value should be about to get replaced, but
-        // just in case, we'll mark this fact to accurately reflect a miss next
-        // time.
-        pthread_rwlock_wrlock(&cache->lockIn);
-        value->timeValid = 0;
-        pthread_rwlock_unlock(&cache->lockIn);
-        return NULL;
-      }
-      uw_Sqlcache_recordHit(ctx, cache);
-      return value;
-    } else if (timeInvalid > cache->timeRefreshed) {
-      // If [timeInvalid <= cache->timeRefreshed], then the cache is warming up.
-      uw_Sqlcache_recordMiss(ctx, cache);
-    }
+  if (value && timeInvalid < value->timeValid) {
+    uw_Sqlcache_recordHit(ctx, cache);
+    return cache->isDeactivated ? NULL : value;
   }
   return NULL;
 }
@@ -5099,6 +5075,7 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
   if (cache->isDeactivated && !uw_Sqlcache_doDeactivatedSample()) {
     return;
   }
+  uw_Sqlcache_recordFlush(ctx, cache);
   // A flush has to happen immediately so that subsequent stores in the same transaction fail.
   // This is safe to do because we will always call [uw_Sqlcache_wlock] earlier.
   // If the transaction fails, the only harm done is a few extra cache misses.
