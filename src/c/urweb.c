@@ -4677,6 +4677,8 @@ void uw_set_remoteSock(uw_context ctx, int sock) {
 
 // Sqlcache
 
+extern int uw_Sqlcache_amAutotuning;
+
 static void uw_Sqlcache_freeValue(uw_Sqlcache_Value *value) {
   if (value) {
     free(value->result);
@@ -4779,6 +4781,9 @@ static void uw_Sqlcache_pushAutotune(uw_context ctx,
 }
 
 static void uw_Sqlcache_recordMiss(uw_context ctx, uw_Sqlcache_Cache *cache) {
+  if (!uw_Sqlcache_amAutotuning) {
+    return;
+  }
   // Nudges towards 0.
   cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
   // DEBUG: printf("AUTOTUNE: hit ratio dec: %f\n", cache->hitRatio);
@@ -4791,6 +4796,9 @@ static void uw_Sqlcache_recordMiss(uw_context ctx, uw_Sqlcache_Cache *cache) {
 }
 
 static void uw_Sqlcache_recordHit(uw_context ctx, uw_Sqlcache_Cache *cache) {
+  if (!uw_Sqlcache_amAutotuning) {
+    return;
+  }
   // Nudges towards 1.
   cache->hitRatio *= 1 - uw_Sqlcache_ratioSensitivity;
   cache->hitRatio += uw_Sqlcache_ratioSensitivity;
@@ -4803,15 +4811,23 @@ static void uw_Sqlcache_recordHit(uw_context ctx, uw_Sqlcache_Cache *cache) {
   }
 }
 
+static int uw_Sqlcache_doDeactivatedSample() {
+  return random() % 256 == 0;
+}
+
+static int uw_Sqlcache_doLruBump() {
+  return random() % 1024 == 0;
+}
+
 // The NUL-terminated prefix of [key] below always looks something like "_k1_k2_k3..._kn".
 
 uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
   // Even when deactivated, occasionally do a dry run to update the hit ratio.
-  if (cache->isDeactivated && random() % 1024 != 0) {
+  if (cache->isDeactivated && !uw_Sqlcache_doDeactivatedSample()) {
     return NULL;
   }
-  int doBump = random() % 1024 == 0;
-  if (doBump) {
+  int doLruBump = uw_Sqlcache_doLruBump();
+  if (doLruBump) {
     pthread_rwlock_wrlock(&cache->lockIn);
   } else {
     pthread_rwlock_rdlock(&cache->lockIn);
@@ -4833,7 +4849,7 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
         // DEBUG: printf("check level %lu key %lu end: %s\n", iLevel, iKey, key);
       }
       size_t len = buf - key;
-      entry = uw_Sqlcache_find(cache, key, len, doBump);
+      entry = uw_Sqlcache_find(cache, key, len, doLruBump);
       if (!entry) {
         break;
       }
@@ -5050,16 +5066,18 @@ static char **uw_Sqlcache_copyKeys(uw_Sqlcache_Cache *cache, char **keys) {
 }
 
 void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
+  if (cache->isDeactivated) {
+    if (uw_Sqlcache_doDeactivatedSample()) {
+      uw_Sqlcache_storeCommitOne(cache, keys, value);
+    }
+    return;
+  }
   // Can't use [uw_Sqlcache_getTimeNow] because it modifies state and we don't
   // have the lock. Releasing the read inner lock leads to correct behavior
   // because the outer lock stops updates from happening.
   pthread_rwlock_rdlock(&cache->lockIn);
   value->timeValid = cache->timeNow;
   pthread_rwlock_unlock(&cache->lockIn);
-  if (cache->isDeactivated) {
-    uw_Sqlcache_storeCommitOne(cache, keys, value);
-    return;
-  }
   uw_Sqlcache_Update *update = malloc(sizeof(uw_Sqlcache_Update));
   update->cache = cache;
   update->keys = uw_Sqlcache_copyKeys(cache, keys);
@@ -5078,6 +5096,9 @@ void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw
 }
 
 void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
+  if (cache->isDeactivated && !uw_Sqlcache_doDeactivatedSample()) {
+    return;
+  }
   // A flush has to happen immediately so that subsequent stores in the same transaction fail.
   // This is safe to do because we will always call [uw_Sqlcache_wlock] earlier.
   // If the transaction fails, the only harm done is a few extra cache misses.
@@ -5085,56 +5106,58 @@ void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
   time_t timeNow = uw_Sqlcache_getTimeNow(cache);
   uw_Sqlcache_Entry *entry = NULL;
   if (cache->numLevels == 0) {
+    cache->timeInvalid = timeNow;
     entry = cache->table;
-  } else {
-    char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
-    char *buf = key;
-    size_t iLevel;
-    for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
-      // DEBUG: printf("flush level %lu start: %s\n", iLevel, key);
-      char *bufWithinLevel = buf;
-      size_t iKey;
-      for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
-        // During this entire block, buf is the buffer pointer at the beginning
-        // of this level, so if a single key in a level is NULL, we find the
-        // entry with keys specified up to the previous level (which is
-        // entirely not null if we've reached this point). The plan is for
-        // either all or none of the keys in a level to be NULL, but this
-        // handles only part of a level being NULL just in case.
-        // DEBUG: printf("flush level %lu key %lu start: %s\n", iLevel, iKey, key);
-        char* k = keys[cache->keyLevels[iLevel][iKey]];
-        if (!k) {
-          // This is where it's important to have buf instead of bufWithinLevel.
-          size_t len = buf - key;
-          if (len == 0) {
-            // A key in the first level is null, so invalidate everything.
-            cache->timeInvalid = timeNow;
-            free(key);
-            pthread_rwlock_unlock(&cache->lockIn);
-            return;
-          } else {
-            uw_Sqlcache_Entry *entry = uw_Sqlcache_find(cache, key, len, 0);
-            if (entry) {
-              entry->timeInvalid = timeNow;
-            }
-            free(key);
-            pthread_rwlock_unlock(&cache->lockIn);
-            return;
-          }
-        }
-        bufWithinLevel = uw_Sqlcache_keyCopy(bufWithinLevel, k);
-        // DEBUG: printf("flush level %lu key %lu end: %s\n", iLevel, iKey, key);
-      }
-      buf = bufWithinLevel;
-      // DEBUG: printf("flush level %lu end: %s\n", iLevel, key);
-    }
-    // All the keys were non-null, so we mark the pointed-to entry as invalid.
-    // (We used to just delete it, but thanks to autotuning, we now care about
-    // the distinction between previously absent and invalidated.)
-    size_t len = buf - key;
-    entry = uw_Sqlcache_find(cache, key, len, 0);
-    free(key);
+    pthread_rwlock_unlock(&cache->lockIn);
+    return;
   }
+  char *key = uw_Sqlcache_allocKeyBuffer(cache, keys);
+  char *buf = key;
+  size_t iLevel;
+  for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
+    // DEBUG: printf("flush level %lu start: %s\n", iLevel, key);
+    char *bufWithinLevel = buf;
+    size_t iKey;
+    for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
+      // During this entire block, buf is the buffer pointer at the beginning
+      // of this level, so if a single key in a level is NULL, we find the
+      // entry with keys specified up to the previous level (which is
+      // entirely not null if we've reached this point). The plan is for
+      // either all or none of the keys in a level to be NULL, but this
+      // handles only part of a level being NULL just in case.
+      // DEBUG: printf("flush level %lu key %lu start: %s\n", iLevel, iKey, key);
+      char* k = keys[cache->keyLevels[iLevel][iKey]];
+      if (!k) {
+        // This is where it's important to have buf instead of bufWithinLevel.
+        size_t len = buf - key;
+        if (len == 0) {
+          // A key in the first level is null, so invalidate everything.
+          cache->timeInvalid = timeNow;
+          free(key);
+          pthread_rwlock_unlock(&cache->lockIn);
+          return;
+        } else {
+          uw_Sqlcache_Entry *entry = uw_Sqlcache_find(cache, key, len, 0);
+          if (entry) {
+            entry->timeInvalid = timeNow;
+          }
+          free(key);
+          pthread_rwlock_unlock(&cache->lockIn);
+          return;
+        }
+      }
+      bufWithinLevel = uw_Sqlcache_keyCopy(bufWithinLevel, k);
+      // DEBUG: printf("flush level %lu key %lu end: %s\n", iLevel, iKey, key);
+    }
+    buf = bufWithinLevel;
+    // DEBUG: printf("flush level %lu end: %s\n", iLevel, key);
+  }
+  // All the keys were non-null, so we mark the pointed-to entry as invalid.
+  // (We used to just delete it, but thanks to autotuning, we now care about
+  // the distinction between previously absent and invalidated.)
+  size_t len = buf - key;
+  entry = uw_Sqlcache_find(cache, key, len, 0);
+  free(key);
   if (entry) {
     entry->timeInvalid = timeNow;
   }

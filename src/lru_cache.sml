@@ -238,7 +238,12 @@ fun setupQuery {index, keyLevels} =
              newline]
     end
 
-val setupGlobal = string "/* No global setup for LRU cache. */"
+fun setupGlobal () =
+    let
+        val bit = if Settings.getSqlcacheAutotuning () then "1" else "0"
+    in
+        string ("int uw_Sqlcache_amAutotuning = " ^ bit ^ ";")
+    end
 
 (* Bundle it up. *)
 val cache =

@@ -13,7 +13,7 @@ type cache =
       flush : int * Mono.exp list -> Mono.exp',
       lock : int * bool (* true = write, false = read *) -> Mono.exp',
       (* Generates C needed for FFI calls in check, store, and flush. *)
-      setupGlobal : Print.PD.pp_desc,
+      setupGlobal : unit -> Print.PD.pp_desc,
       setupQuery : info -> Print.PD.pp_desc}
 
 end

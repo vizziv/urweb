@@ -162,7 +162,10 @@ fun oneRun args =
               | "-sqlcache" :: rest =>
                 (Settings.setSqlcache true;
                  doArgs rest)
-              | "-heuristic" :: h :: rest =>
+              | "-noSqlcacheAutotuning" :: rest =>
+                (Settings.setSqlcacheAutotuning false;
+                 doArgs rest)
+              | "-sqlcacheHeuristic" :: h :: rest =>
                 (Sqlcache.setHeuristic h;
                  doArgs rest)
               | "-moduleOf" :: fname :: _ =>

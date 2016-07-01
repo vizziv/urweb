@@ -3409,7 +3409,7 @@ fun p_file env (ds, ps) =
              let
                  val {setupGlobal, setupQuery, ...} = Sqlcache.getCache ()
              in
-                 box (setupGlobal :: newline :: List.map setupQuery (Sqlcache.getFfiInfo ()))
+                 box (setupGlobal () :: newline :: List.map setupQuery (Sqlcache.getFfiInfo ()))
              end,
              newline,
 

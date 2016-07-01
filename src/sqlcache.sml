@@ -1608,7 +1608,6 @@ fun addFlushing ((file, {tableToIndices, indexToInvalInfoNumArgs, ...} : state),
                       o map (fn (i, argss) => map (fn args => flush (i, atomosToExps args)) argss)
         fun updateFfiInfos ((i, argss), indexToInvs) =
             let
-                val () = Print.preface ("FIXME: " ^ Int.toString i, Print.space)
                 fun update (args, indexToInvs) = IBLMM.insert (indexToInvs, i, map isSome args)
             in
                 List.foldl update indexToInvs argss
