@@ -409,6 +409,11 @@ val groupby = log "groupby"
                                 (list sqexp))
                         ignore)
 
+val limit = log "limit"
+                (wrap (follow (ws (const "LIMIT "))
+                              sqexp)
+                      ignore)
+
 val jtype = altL [wrap (const "JOIN") (fn () => Inner),
                   wrap (const "LEFT JOIN") (fn () => Left),
                   wrap (const "RIGHT JOIN") (fn () => Right),
@@ -451,7 +456,7 @@ and query chs = log "query"
                                                                   (follow query (const "))")))))
                                           (fn ((), (q1, ((), (q2, ())))) => Union (q1, q2)))
                                     (wrap query1 Query1))
-                               (follow (opt groupby) (opt orderby)))
+                               (follow (follow (opt groupby) (opt orderby)) (opt limit)))
                           #1)
                     chs
 
