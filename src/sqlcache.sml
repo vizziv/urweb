@@ -196,6 +196,7 @@ fun effectful (effs : IS.set) =
               | ESeq _ => false
               | ELet _ => false
               | EUnurlify _ => false
+              | EError _ => false
               (* ASK: what should we do about closures? *)
               (* Everything else is some sort of effect. We could flip this and
                  explicitly list bits of Mono that are effectful, but this is
@@ -796,7 +797,7 @@ val rec sqexpToFormula =
   | Sql.SqKnown _ => raise Fail "Sqlcache: sqexpToFormula (SqKnown)"
   | Sql.Inj _ => raise Fail "Sqlcache: sqexpToFormula (Inj)"
   | Sql.SqFunc _ => raise Fail "Sqlcache: sqexpToFormula (SqFunc)"
-  | Sql.Unmodeled => raise Fail "Sqlcache: sqexpToFormula (Unmodeled)"
+  | Sql.Unmodeled _ => raise Fail "Sqlcache: sqexpToFormula (Unmodeled)"
   | Sql.Null => raise Fail "Sqlcache: sqexpToFormula (Null)"
 
 fun mapSqexpFields f =
@@ -1408,15 +1409,18 @@ fun cacheQuery (effs, env, q) : subexp =
                  Sql.parse Sql.query queryText
                  <\obind\>
                   (fn queryParsed =>
-                      let
-                          val invalInfo = InvalInfo.singleton queryParsed
-                          fun mkExp state =
-                              case cacheExp (env, EQuery q, invalInfo, state) of
-                                  NONE => ((EQuery q, dummyLoc), state)
-                                | SOME (cachedExp, state) => ((cachedExp, dummyLoc), state)
-                      in
-                          SOME (Cachable (invalInfo, mkExp))
-                      end))
+                      if Sql.containsImpure queryParsed then
+                          NONE
+                      else
+                          let
+                              val invalInfo = InvalInfo.singleton queryParsed
+                              fun mkExp state =
+                                  case cacheExp (env, EQuery q, invalInfo, state) of
+                                      NONE => ((EQuery q, dummyLoc), state)
+                                    | SOME (cachedExp, state) => ((cachedExp, dummyLoc), state)
+                          in
+                              SOME (Cachable (invalInfo, mkExp))
+                          end))
     in
         case attempt of
             NONE => Impure (EQuery q, dummyLoc)

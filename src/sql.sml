@@ -204,6 +204,10 @@ datatype Rel =
          RCmp of cmp
        | RLop of lop
 
+datatype purity =
+         Pure
+       | Impure
+
 datatype sqexp =
          SqConst of Prim.t
        | SqTrue
@@ -215,7 +219,7 @@ datatype sqexp =
        | SqKnown of sqexp
        | Inj of Mono.exp
        | SqFunc of string * sqexp
-       | Unmodeled
+       | Unmodeled of purity
        | Null
 
 fun cmp s r = wrap (const s) (fn () => RCmp r)
@@ -325,10 +329,10 @@ fun arithmetic pExp = follow (const "(")
                                      (follow (altL (map const [" + ", " - ", " * ", " / ", " >> ", " << "]))
                                              (follow pExp (const ")"))))
 
-val unmodeled = altL [const "COUNT(*)",
-                      const "CURRENT_TIMESTAMP"]
+val unmodeled = altL [wrap (const "COUNT(*)") (fn () => Pure),
+                      wrap (const "CURRENT_TIMESTAMP") (fn () => Impure)]
 
-val sqlcacheMode = ref false;
+val sqlcacheMode = ref false
 
 fun sqexp chs =
     log "sqexp"
@@ -338,11 +342,11 @@ fun sqexp chs =
            wrap (follow (const "NULL::") ident) (fn ((), _) => Null),
            wrap (const "NULL") (fn () => Null),
            wrap known SqKnown,
+           wrap unmodeled Unmodeled,
            wrap func SqFunc,
            wrap field Field,
            wrap uw_ident Computed,
-           wrap (arithmetic sqexp) (fn _ => Unmodeled),
-           wrap unmodeled (fn () => Unmodeled),
+           wrap (arithmetic sqexp) (fn _ => Unmodeled Pure),
            wrap (if !sqlcacheMode then sqlifySqlcache else sqlify) Inj,
            wrap (follow (const "COALESCE(") (follow sqexp (follow (const ",")
                                                                   (follow (keep (fn ch => ch <> #")")) (const ")")))))
@@ -510,5 +514,49 @@ datatype querydml =
        | Dml of dml
 
 val querydml = log "querydml" (altL [wrap dml Dml, wrap query Query])
+
+fun sqexpContainsImpure e =
+    case e of
+        SqConst _ => false
+      | SqTrue => false
+      | SqFalse => false
+      | SqNot e => sqexpContainsImpure e
+      | Field _ => false
+      | Computed _ => false
+      | Binop (_, e1, e2) => sqexpContainsImpure e1 orelse sqexpContainsImpure e2
+      | SqKnown _ => true
+      | Inj _ => false
+      | SqFunc (_, e) => sqexpContainsImpure e
+      | Unmodeled Pure => false
+      | Unmodeled Impure => true
+      | Null => false
+
+fun sitemContainsImpure si =
+    case si of
+        SqField _ => false
+      | SqExp (e, _) => sqexpContainsImpure e
+
+fun optionExists f opt =
+    case opt of
+        NONE => false
+      | SOME x => f x
+
+fun containsImpure q =
+    case q of
+        Query1 r =>
+        List.exists sitemContainsImpure (#Select r)
+        orelse List.exists fitemContainsImpure (#From r)
+        orelse optionExists sqexpContainsImpure (#Where r)
+      | Union (q1, q2) =>
+        containsImpure q1 orelse containsImpure q2
+
+and fitemContainsImpure fi =
+    case fi of
+        Table _ => false
+      | Join (_, fi1, fi2, e) =>
+        fitemContainsImpure fi1
+        orelse fitemContainsImpure fi2
+        orelse sqexpContainsImpure e
+      | Nested (q, _) => containsImpure q
 
 end

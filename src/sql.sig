@@ -61,6 +61,10 @@ datatype Rel =
          RCmp of cmp
        | RLop of lop
 
+datatype purity =
+         Pure
+       | Impure
+
 datatype sqexp =
          SqConst of Prim.t
        | SqTrue
@@ -72,7 +76,7 @@ datatype sqexp =
        | SqKnown of sqexp
        | Inj of Mono.exp
        | SqFunc of string * sqexp
-       | Unmodeled
+       | Unmodeled of purity
        | Null
 
 datatype ('a,'b) sum = inl of 'a | inr of 'b
@@ -100,5 +104,7 @@ datatype dml =
        | Update of string * (string * sqexp) list * sqexp
 
 val dml : dml parser
+
+val containsImpure : query -> bool
 
 end

@@ -1206,7 +1206,7 @@ fun expIn rv env rvOf =
                          inl e => inl (Func (Other f, [e]))
                        | _ => default ())
 
-                  | Unmodeled => inl (Func (Other "allow", [rv ()]))
+                  | Unmodeled _ => inl (Func (Other "allow", [rv ()]))
             end
     in
         expIn
@@ -1303,7 +1303,7 @@ fun doQuery (arg : 'a doQuery) (e as (_, loc)) =
                                                   [])
                                        | SOME e => [(true, e)])
                                   | SqFunc (_, e) => usedFields e
-                                  | Unmodeled => []
+                                  | Unmodeled _ => []
 
                             fun normal' () =
                                 case #Cont arg of
