@@ -171,6 +171,8 @@ $(SRC)/mono_print.sml
 $(SRC)/mono_fooify.sig
 $(SRC)/mono_fooify.sml
 
+$(SRC)/cjr.sml
+
 $(SRC)/sql.sig
 $(SRC)/sql.sml
 
@@ -225,8 +227,6 @@ $(SRC)/sigcheck.sig
 $(SRC)/sigcheck.sml
 
 $(SRC)/mono_inline.sml
-
-$(SRC)/cjr.sml
 
 $(SRC)/postgres.sig
 $(SRC)/postgres.sml
