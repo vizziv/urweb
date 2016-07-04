@@ -141,7 +141,6 @@ typedef struct uw_Sqlcache_Entry {
 
 typedef struct uw_Sqlcache_Cache {
   // Locking.
-  pthread_rwlock_t lockActivation;
   pthread_rwlock_t lockOut;
   pthread_rwlock_t lockIn;
   uw_Sqlcache_Entry *table;
@@ -157,6 +156,8 @@ typedef struct uw_Sqlcache_Cache {
   double hitRatio;
   int inLimbo;
   uw_Basis_bool isDeactivated;
+  time_t clockActivated;
+  time_t clockDeactivated;
 } uw_Sqlcache_Cache;
 
 #endif

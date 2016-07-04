@@ -4790,8 +4790,8 @@ static void uw_Sqlcache_recordFlush(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!cache->inLimbo
       && !cache->isDeactivated
       && cache->hitRatio < uw_Sqlcache_ratioThreshold) {
-    printf("AUTOTUNE: cache deactivating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_True);
+    printf("AUTOTUNE: cache deactivating\n");
   }
 }
 
@@ -4806,13 +4806,25 @@ static void uw_Sqlcache_recordHit(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!cache->inLimbo
       && cache->isDeactivated
       && cache->hitRatio > uw_Sqlcache_ratioThreshold) {
-    printf("AUTOTUNE: cache activating\n");
     uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_False);
+    printf("AUTOTUNE: cache activating\n");
   }
 }
 
+static int uw_Sqlcache_isDeactivatedRead(uw_Sqlcache_Cache *cache) {
+  // If the cache was just activated, wait a bit before considering it safe to
+  // read from so that in-flight updates that would flush it stop.
+  return cache->isDeactivated || cache->clockActivated > time(NULL) - 2;
+}
+
+static int uw_Sqlcache_isDeactivatedWrite(uw_Sqlcache_Cache *cache) {
+  // If the cache was just deactivated, keep flushing for a bit so that
+  // in-flight reads don't get stale values.
+  return cache->isDeactivated && cache->clockDeactivated <= time(NULL) - 2;
+}
+
 static int uw_Sqlcache_doDeactivatedSample() {
-  return random() % 256 == 0;
+  return random() % 4096 == 0;
 }
 
 static int uw_Sqlcache_doLruBump() {
@@ -4822,8 +4834,9 @@ static int uw_Sqlcache_doLruBump() {
 // The NUL-terminated prefix of [key] below always looks something like "_k1_k2_k3..._kn".
 
 uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
+  int isDeactivated = uw_Sqlcache_isDeactivatedRead(cache);
   // Even when deactivated, occasionally do a dry run to update the hit ratio.
-  if (cache->isDeactivated && !uw_Sqlcache_doDeactivatedSample()) {
+  if (isDeactivated && !uw_Sqlcache_doDeactivatedSample()) {
     return NULL;
   }
   int doLruBump = uw_Sqlcache_doLruBump();
@@ -4871,7 +4884,7 @@ uw_Sqlcache_Value *uw_Sqlcache_check(uw_context ctx, uw_Sqlcache_Cache *cache, c
   // against it.
   if (value && timeInvalid < value->timeValid) {
     uw_Sqlcache_recordHit(ctx, cache);
-    return cache->isDeactivated ? NULL : value;
+    return isDeactivated ? NULL : value;
   }
   return NULL;
 }
@@ -4969,26 +4982,27 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
   }
   ctx->cacheUnlock = NULL;
   // Autotunes.
-  // Everything is here rather than in [uw_Sqlcache_commit] because:
-  //   (1) We need write permissions on the activation lock, but we have read
-  //       permissions during [uw_Sqlcache_commit].
-  //   (2) It's fine to change activation even if a transaction doesn't commit.
+  // Everything is here rather than in [uw_Sqlcache_commit] because it used to
+  // be necessary and it's fine to change activation even if a transaction
+  // doesn't commit.
   uw_Sqlcache_Autotune *autotune = ctx->cacheAutotune;
   while (autotune) {
     uw_Sqlcache_Cache *cache = autotune->cache;
-    // Write permisison on the activation lock is the strongest possible
-    // permission, so no more locking is needed in here.
-    pthread_rwlock_wrlock(&cache->lockActivation);
+    uw_Basis_bool isDeactivated = autotune->isDeactivated;
+    cache->isDeactivated = isDeactivated;
+    pthread_rwlock_wrlock(&cache->lockIn);
     cache->inLimbo = 0;
-    cache->isDeactivated = autotune->isDeactivated;
-    cache->hitRatio =
-      cache->isDeactivated
-      ? uw_Sqlcache_ratioDeactivateReset
-      : uw_Sqlcache_ratioActivateReset;
     time_t timeNow = uw_Sqlcache_getTimeNow(cache);
     cache->timeInvalid = timeNow;
     cache->timeRefreshed = timeNow;
-    pthread_rwlock_unlock(&cache->lockActivation);
+    if (isDeactivated) {
+      cache->hitRatio = uw_Sqlcache_ratioDeactivateReset;
+      cache->clockDeactivated = time(NULL);
+    } else {
+      cache->hitRatio = uw_Sqlcache_ratioActivateReset;
+      cache->clockActivated = time(NULL);
+    }
+    pthread_rwlock_unlock(&cache->lockIn);
     uw_Sqlcache_Autotune *nextAutotune = autotune->next;
     free(autotune);
     autotune = nextAutotune;
@@ -5014,18 +5028,14 @@ static void uw_Sqlcache_pushUnlock(uw_context ctx, pthread_rwlock_t *lock) {
 }
 
 void uw_Sqlcache_rlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
-  pthread_rwlock_rdlock(&cache->lockActivation);
-  uw_Sqlcache_pushUnlock(ctx, &cache->lockActivation);
-  if (!cache->isDeactivated) {
+  if (!uw_Sqlcache_isDeactivatedRead(cache)) {
     pthread_rwlock_rdlock(&cache->lockOut);
     uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
   }
 }
 
 void uw_Sqlcache_wlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
-  pthread_rwlock_rdlock(&cache->lockActivation);
-  uw_Sqlcache_pushUnlock(ctx, &cache->lockActivation);
-  if (!cache->isDeactivated) {
+  if (!uw_Sqlcache_isDeactivatedWrite(cache)) {
     pthread_rwlock_wrlock(&cache->lockOut);
     uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
   }
@@ -5042,7 +5052,7 @@ static char **uw_Sqlcache_copyKeys(uw_Sqlcache_Cache *cache, char **keys) {
 }
 
 void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw_Sqlcache_Value *value) {
-  if (cache->isDeactivated) {
+  if (uw_Sqlcache_isDeactivatedRead(cache)) {
     if (uw_Sqlcache_doDeactivatedSample()) {
       uw_Sqlcache_storeCommitOne(cache, keys, value);
     }
@@ -5072,7 +5082,7 @@ void uw_Sqlcache_store(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys, uw
 }
 
 void uw_Sqlcache_flush(uw_context ctx, uw_Sqlcache_Cache *cache, char **keys) {
-  if (cache->isDeactivated && !uw_Sqlcache_doDeactivatedSample()) {
+  if (uw_Sqlcache_isDeactivatedWrite(cache) && !uw_Sqlcache_doDeactivatedSample()) {
     return;
   }
   uw_Sqlcache_recordFlush(ctx, cache);
@@ -5151,7 +5161,9 @@ int strcmp_nullsafe(const char *str1, const char *str2) {
 
 // Dyncache, which uses [void *] to be compatible with any database backend.
 
-extern void uw_Dyncache_freeValue(void *);
+/* FIXME: extern void uw_Dyncache_freeValue(void *); */
+static void uw_Dyncache_freeValue(void *value) {};
+
 
 // We're not using any sort of locking, so we delay freeing values for at least
 // 1 second to allow in-flight requests that are using them to finish. We keep
