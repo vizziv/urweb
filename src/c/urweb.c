@@ -5345,3 +5345,23 @@ void uw_Dyncache_flush(const char *keyFlush) {
     entryFlush->timeInvalid = uw_Dyncache_getTimeNow();
   }
 }
+
+static char uw_Dyncache_keySep = '_';
+
+char *uw_Dyncache_keyCheckPrepared(const char *id,
+                                   size_t numParams,
+                                   const char **params,
+                                   const int *paramLengths) {
+  size_t len = strlen(id);
+  int i;
+  for (i = 0; i < numParams; i++) {
+    len += paramLengths[i] + 1;
+  }
+  char *key = malloc(len + 1);
+  char *buf = stpcpy(key, id);
+  for (i = 0; i < numParams; i++) {
+    *buf++ = uw_Dyncache_keySep;
+    buf = stpcpy(buf, params[i]);
+  }
+  return key;
+}
