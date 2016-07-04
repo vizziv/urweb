@@ -596,52 +596,59 @@ fun isNotNull (Nullable _) = false
 
 datatype failure_mode = Error | None
 
-type dbms = {
-     name : string,
-     randomFunction : string,
-     header : string,
-     link : string,
-     p_sql_type : sql_type -> string,
-     init : {dbstring : string,
-             prepared : (string * int) list,
-             tables : (string * (string * sql_type) list) list,
-             views : (string * (string * sql_type) list) list,
-             sequences : string list} -> Print.PD.pp_desc,
-     query : {loc : ErrorMsg.span, cols : sql_type list,
-              doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int, typ : sql_type} -> Print.PD.pp_desc)
-                       -> Print.PD.pp_desc}
-             -> Print.PD.pp_desc,
-     queryPrepared : {loc : ErrorMsg.span, id : int, query : string,
-                      inputs : sql_type list, cols : sql_type list,
-                      doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int,
-                                 typ : sql_type} -> Print.PD.pp_desc)
-                               -> Print.PD.pp_desc,
-                      nested : bool}
-                     -> Print.PD.pp_desc,
-     dml : ErrorMsg.span * failure_mode -> Print.PD.pp_desc,
-     dmlPrepared : {loc : ErrorMsg.span, id : int, dml : string,
-                    inputs : sql_type list, mode : failure_mode} -> Print.PD.pp_desc,
-     nextval : {loc : ErrorMsg.span, seqName : string option, seqE : Print.PD.pp_desc} -> Print.PD.pp_desc,
-     nextvalPrepared : {loc : ErrorMsg.span, id : int, query : string} -> Print.PD.pp_desc,
-     setval : {loc : ErrorMsg.span, seqE : Print.PD.pp_desc, count : Print.PD.pp_desc} -> Print.PD.pp_desc,
-     sqlifyString : string -> string,
-     p_cast : string * sql_type -> string,
-     p_blank : int * sql_type -> string,
-     supportsDeleteAs : bool,
-     supportsUpdateAs : bool,
-     createSequence : string -> string,
-     textKeysNeedLengths : bool,
-     supportsNextval : bool,
-     supportsNestedPrepared : bool,
-     sqlPrefix : string,
-     supportsOctetLength : bool,
-     trueString : string,
-     falseString : string,
-     onlyUnion : bool,
-     nestedRelops : bool,
-     windowFunctions: bool,
-     supportsIsDistinctFrom : bool
-}
+
+    type dbms = {
+         name : string,
+         (* Call it this on the command line *)
+         randomFunction : string,
+         (* DBMS's name for random number-generating function *)
+         header : string,
+         (* Include this C header file *)
+         link : string,
+         (* Pass these linker arguments *)
+         p_sql_type : sql_type -> string,
+         init : {dbstring : string,
+                 prepared : (string * int) list,
+                 tables : (string * (string * sql_type) list) list,
+                 views : (string * (string * sql_type) list) list,
+                 sequences : string list} -> Print.PD.pp_desc,
+         (* Define uw_client_init(), uw_db_init(), uw_db_close(), uw_db_begin(), uw_db_commit(), and uw_db_rollback() *)
+         query : {loc : ErrorMsg.span, cols : sql_type list,
+                  doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int, typ : sql_type} -> Print.PD.pp_desc)
+                           -> Print.PD.pp_desc,
+                  tableNames : string list}
+                 -> Print.PD.pp_desc,
+         queryPrepared : {loc : ErrorMsg.span, id : int, query : string,
+                          inputs : sql_type list, cols : sql_type list,
+                          doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int,
+                                     typ : sql_type} -> Print.PD.pp_desc)
+                                   -> Print.PD.pp_desc,
+                          nested : bool, tableNames : string list}
+                         -> Print.PD.pp_desc,
+         dml : {loc : ErrorMsg.span, mode : failure_mode, tableName : string} -> Print.PD.pp_desc,
+         dmlPrepared : {loc : ErrorMsg.span, id : int, dml : string,
+                        inputs : sql_type list, mode : failure_mode, tableName : string} -> Print.PD.pp_desc,
+         nextval : {loc : ErrorMsg.span, seqE : Print.PD.pp_desc, seqName : string option} -> Print.PD.pp_desc,
+         nextvalPrepared : {loc : ErrorMsg.span, id : int, query : string} -> Print.PD.pp_desc,
+         setval : {loc : ErrorMsg.span, seqE : Print.PD.pp_desc, count : Print.PD.pp_desc} -> Print.PD.pp_desc,
+         sqlifyString : string -> string,
+         p_cast : string * sql_type -> string,
+         p_blank : int * sql_type -> string (* Prepared statement input *),
+         supportsDeleteAs : bool,
+         supportsUpdateAs : bool,
+         createSequence : string -> string,
+         textKeysNeedLengths : bool,
+         supportsNextval : bool,
+         supportsNestedPrepared : bool,
+         sqlPrefix : string,
+         supportsOctetLength : bool,
+         trueString : string,
+         falseString : string,
+         onlyUnion : bool,
+         nestedRelops : bool,
+         windowFunctions : bool,
+         supportsIsDistinctFrom : bool
+    }
 
 val dbmses = ref ([] : dbms list)
 val curDb = ref ({name = "",

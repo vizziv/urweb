@@ -937,7 +937,7 @@ fun queryCommon {loc, query, cols, doCols} =
          newline,
          newline]
 
-fun query {loc, cols, doCols} =
+fun query {loc, cols, doCols, tableNames = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          string "MYSQL_STMT *stmt = mysql_stmt_init(conn->conn);",
@@ -959,7 +959,7 @@ fun query {loc, cols, doCols} =
          string "uw_pop_cleanup(ctx);",
          newline]
 
-fun queryPrepared {loc, id, query, inputs, cols, doCols, nested} =
+fun queryPrepared {loc, id, query, inputs, cols, doCols, nested, tableNames = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          string "MYSQL_BIND in[",
@@ -1257,7 +1257,7 @@ fun dmlCommon {loc, dml, mode} =
          string "}",
          newline]
 
-fun dml (loc, mode) =
+fun dml {loc, mode, tableName = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          string "MYSQL_STMT *stmt = mysql_stmt_init(conn->conn);",
@@ -1279,7 +1279,7 @@ fun dml (loc, mode) =
          string "uw_pop_cleanup(ctx);",
          newline]
 
-fun dmlPrepared {loc, id, dml, inputs, mode} =
+fun dmlPrepared {loc, id, dml, inputs, mode, tableName = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          string "MYSQL_BIND in[",

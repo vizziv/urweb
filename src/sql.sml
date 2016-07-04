@@ -515,6 +515,33 @@ datatype querydml =
 
 val querydml = log "querydml" (altL [wrap dml Dml, wrap query Query])
 
+fun dmlTableName e =
+    let
+        fun chunkifyCjr e =
+            case #1 e of
+                Cjr.EPrim (Prim.String (_, s)) => [String s]
+              | Cjr.EFfiApp ("Basis", "strcat", [(e1, _), (e2, _)]) =>
+                let
+                    val chs1 = chunkifyCjr e1
+                    val chs2 = chunkifyCjr e2
+                in
+                    case chs2 of
+                        String s2 :: chs2' =>
+                        (case List.last chs1 of
+                             String s1 => List.take (chs1, length chs1 - 1) @ String (s1 ^ s2) :: chs2'
+                           | _ => chs1 @ chs2)
+                      | _ => chs1 @ chs2
+                end
+              (* HACK: we don't care about the Cjr expression, so we just make
+                 up a random Mono one to replace it. *)
+              | _ => [Exp (ERel 0, ErrorMsg.dummySpan)]
+        val parser = follow (altL (map const ["INSERT INTO ", "DELETE FROM ", "UPDATE "])) uw_ident
+    in
+        case parser (chunkifyCjr e) of
+            SOME ((_, name), _) => SOME name
+          | _ => NONE
+    end
+
 fun sqexpContainsImpure e =
     case e of
         SqConst _ => false

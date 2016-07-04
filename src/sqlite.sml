@@ -536,7 +536,7 @@ fun queryCommon {loc, query, cols, doCols} =
          newline,
          newline]
 
-fun query {loc, cols, doCols} =
+fun query {loc, cols, doCols, tableNames = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          string "sqlite3_stmt *stmt;",
@@ -643,7 +643,7 @@ fun p_inputs loc =
                                      newline]
                             end)
 
-fun queryPrepared {loc, id, query, inputs, cols, doCols, nested} =
+fun queryPrepared {loc, id, query, inputs, cols, doCols, nested, tableNames = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          p_pre_inputs inputs,
@@ -721,7 +721,7 @@ fun dmlCommon {loc, dml, mode} =
            | Settings.None => string "uw_set_error_message(ctx, sqlite3_errmsg(conn->conn));",
          newline]
 
-fun dml (loc, mode) =
+fun dml {loc, mode, tableName = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          string "sqlite3_stmt *stmt;",
@@ -739,7 +739,7 @@ fun dml (loc, mode) =
          string "uw_pop_cleanup(ctx);",
          newline]
 
-fun dmlPrepared {loc, id, dml, inputs, mode = mode} =
+fun dmlPrepared {loc, id, dml, inputs, mode, tableName = _} =
     box [string "uw_conn *conn = uw_get_db(ctx);",
          newline,
          p_pre_inputs inputs,

@@ -2025,6 +2025,8 @@ and p_exp' par tail env (e, loc) =
                     NONE => []
                   | SOME _ => getPargs query
 
+            val tableNames = map #1 tables
+
             fun doCols p_getcol =
                 box [string "struct __uws_",
                      string (Int.toString rnum),
@@ -2109,7 +2111,8 @@ and p_exp' par tail env (e, loc) =
                           #query (Settings.currentDbms ())
                                  {loc = loc,
                                   cols = map (fn (_, t) => sql_type_in env t) outputs,
-                                  doCols = doCols}]
+                                  doCols = doCols,
+                                  tableNames = tableNames}]
                    | SOME {id, query, nested} =>
                      box [p_list_sepi newline
                                       (fn i => fn (e, t) =>
@@ -2133,7 +2136,8 @@ and p_exp' par tail env (e, loc) =
                                           inputs = map #2 inputs,
                                           cols = map (fn (_, t) => sql_type_in env t) outputs,
                                           doCols = doCols,
-                                          nested = nested}],
+                                          nested = nested,
+                                          tableNames = tableNames}],
                  newline,
 
                  if wontLeakAnything then
@@ -2161,10 +2165,21 @@ and p_exp' par tail env (e, loc) =
                               string "uw_ensure_transaction(ctx);",
                               newline,
                               newline,
-                              #dml (Settings.currentDbms ()) (loc, mode)]
+                              let
+                                  val tableName =
+                                      case Sql.dmlTableName dml of
+                                          SOME name => name
+                                        | NONE => raise Fail "CjrPrint: malformed DML"
+                              in
+                                  #dml (Settings.currentDbms ()) {loc = loc, mode = mode, tableName = tableName}
+                              end]
                | SOME {id, dml = dml'} =>
                  let
                      val inputs = getPargs dml
+                     val tableName =
+                         case Sql.dmlTableName dml of
+                             SOME name => name
+                           | NONE => raise Fail "CjrPrint: malformed DML"
                  in
                      box [p_list_sepi newline
                                       (fn i => fn (e, t) =>
@@ -2187,7 +2202,8 @@ and p_exp' par tail env (e, loc) =
                                                                   id = id,
                                                                   dml = dml',
                                                                   inputs = map #2 inputs,
-                                                                  mode = mode}]
+                                                                  mode = mode,
+                                                                  tableName = tableName}]
                  end,
              newline,
              newline,

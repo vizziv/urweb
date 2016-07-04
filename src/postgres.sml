@@ -84,7 +84,7 @@ fun checkRel (table, checkNullable) (s, xts) =
                                                                                     "bigint" =>
                                                                                     "' AND data_type IN ('bigint', 'numeric', 'integer')"
                                                                                   | "text" =>
-                                                                                    "' AND data_type IN ('text', 'character varying')"                                                                          
+                                                                                    "' AND data_type IN ('text', 'character varying')"
                                                                                   | t =>
                                                                                     String.concat ["' AND data_type = '",
                                                                                                    t,
@@ -692,7 +692,7 @@ fun queryCommon {loc, query, cols, doCols} =
          string "uw_pop_cleanup(ctx);",
          newline]
 
-fun query {loc, cols, doCols} =
+fun query {loc, cols, doCols, tableNames} =
     box [string "PGconn *conn = uw_get_db(ctx);",
          newline,
          string "PGresult *res = PQexecParams(conn, query, 0, NULL, NULL, NULL, NULL, 0);",
@@ -761,7 +761,7 @@ fun makeParams inputs =
                      inputs,
          newline]
 
-fun queryPrepared {loc, id, query, inputs, cols, doCols, nested = _} =
+fun queryPrepared {loc, id, query, inputs, cols, doCols, nested = _, tableNames} =
     box [string "PGconn *conn = uw_get_db(ctx);",
          newline,
 
@@ -922,7 +922,7 @@ fun makeSavepoint mode =
                      newline,
                      newline]
 
-fun dml (loc, mode) =
+fun dml {loc, mode, tableName} =
     box [string "PGconn *conn = uw_get_db(ctx);",
          newline,
          string "PGresult *res;",
@@ -935,7 +935,7 @@ fun dml (loc, mode) =
          newline,
          dmlCommon {loc = loc, dml = string "dml", mode = mode}]
 
-fun dmlPrepared {loc, id, dml, inputs, mode} =
+fun dmlPrepared {loc, id, dml, inputs, mode, tableName} =
     box [string "PGconn *conn = uw_get_db(ctx);",
          newline,
 

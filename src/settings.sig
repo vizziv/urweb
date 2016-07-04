@@ -187,18 +187,19 @@ signature SETTINGS = sig
          (* Define uw_client_init(), uw_db_init(), uw_db_close(), uw_db_begin(), uw_db_commit(), and uw_db_rollback() *)
          query : {loc : ErrorMsg.span, cols : sql_type list,
                   doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int, typ : sql_type} -> Print.PD.pp_desc)
-                           -> Print.PD.pp_desc}
+                           -> Print.PD.pp_desc,
+                  tableNames : string list}
                  -> Print.PD.pp_desc,
          queryPrepared : {loc : ErrorMsg.span, id : int, query : string,
                           inputs : sql_type list, cols : sql_type list,
                           doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int,
                                      typ : sql_type} -> Print.PD.pp_desc)
                                    -> Print.PD.pp_desc,
-                          nested : bool}
+                          nested : bool, tableNames : string list}
                          -> Print.PD.pp_desc,
-         dml : ErrorMsg.span * failure_mode -> Print.PD.pp_desc,
+         dml : {loc : ErrorMsg.span, mode : failure_mode, tableName : string} -> Print.PD.pp_desc,
          dmlPrepared : {loc : ErrorMsg.span, id : int, dml : string,
-                        inputs : sql_type list, mode : failure_mode} -> Print.PD.pp_desc,
+                        inputs : sql_type list, mode : failure_mode, tableName : string} -> Print.PD.pp_desc,
          nextval : {loc : ErrorMsg.span, seqE : Print.PD.pp_desc, seqName : string option} -> Print.PD.pp_desc,
          nextvalPrepared : {loc : ErrorMsg.span, id : int, query : string} -> Print.PD.pp_desc,
          setval : {loc : ErrorMsg.span, seqE : Print.PD.pp_desc, count : Print.PD.pp_desc} -> Print.PD.pp_desc,

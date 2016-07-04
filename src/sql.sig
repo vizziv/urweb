@@ -105,6 +105,8 @@ datatype dml =
 
 val dml : dml parser
 
+val dmlTableName : Cjr.exp -> string option
+
 val containsImpure : query -> bool
 
 end
