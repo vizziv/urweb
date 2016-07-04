@@ -5161,9 +5161,9 @@ int strcmp_nullsafe(const char *str1, const char *str2) {
 
 // Dyncache, which uses [void *] to be compatible with any database backend.
 
-/* FIXME: extern void uw_Dyncache_freeValue(void *); */
-static void uw_Dyncache_freeValue(void *value) {};
-
+static void uw_Dyncache_freeValue(void *value) {
+  free(value);
+}
 
 // We're not using any sort of locking, so we delay freeing values for at least
 // 1 second to allow in-flight requests that are using them to finish. We keep
@@ -5248,16 +5248,17 @@ static void uw_Dyncache_pushFreeValue(void *value) {
 }
 
 typedef struct uw_Dyncache_EntryFlush {
-  char *keyFlush;
+  char *key;
   unsigned long timeInvalid;
   UT_hash_handle hh;
 } uw_Dyncache_EntryFlush;
 
 typedef struct uw_Dyncache_EntryCheck {
-  char *keyCheck;
+  char *key;
   void *value;
   unsigned long timeValid;
-  uw_Dyncache_EntryFlush *entryFlush;
+  uw_Dyncache_EntryFlush **entriesFlush; // I know it's mispelled....
+  int numEntriesFlush;
   UT_hash_handle hh;
 } uw_Dyncache_EntryCheck;
 
@@ -5269,14 +5270,24 @@ static unsigned long uw_Dyncache_getTimeNow() {
   return ++uw_Dyncache_timeNow;
 }
 
+static int uw_Dyncache_valid(uw_Dyncache_EntryCheck *entryCheck) {
+  if (!entryCheck) {
+    return 0;
+  }
+  int i;
+  for (i = 0; i < entryCheck->numEntriesFlush; i++) {
+    if (entryCheck->timeValid <= entryCheck->entriesFlush[i]->timeInvalid) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 void *uw_Dyncache_check(const char *keyCheck) {
   // DEBUG: printf("check: %s\n", keyCheck);
   uw_Dyncache_EntryCheck *entryCheck = NULL;
   HASH_FIND(hh, uw_Dyncache_tableCheck, keyCheck, strlen(keyCheck), entryCheck);
-  void *value =
-    entryCheck && entryCheck->timeValid > entryCheck->entryFlush->timeInvalid
-    ? entryCheck->value
-    : NULL;
+  void *value = uw_Dyncache_valid(entryCheck) ? entryCheck->value : NULL;
   if (value) {
     // DEBUG: printf("hit: %p\n", value);
   } else {
@@ -5285,33 +5296,40 @@ void *uw_Dyncache_check(const char *keyCheck) {
   return value;
 }
 
-// Returns something equivalent but not physically (pointerly) equal to [value].
-void *uw_Dyncache_store(const char *keyCheck, const char *keyFlush, void *value) {
-  // DEBUG: printf("store: %s %s %p\n", keyCheck, keyFlush, value);
+// Returns something equivalent but not necessarily physically (pointerly)
+// equal to [value].
+void *uw_Dyncache_store(const char *keyCheck, const char **keysFlush, int numKeysFlush, void *value) {
+  // DEBUG: printf("store: %s %s %p [only one flush key shown]\n", keyCheck, keysFlush[0], value);
   uw_Dyncache_EntryCheck *entryCheck = NULL;
   size_t lenKeyCheck = strlen(keyCheck);
   HASH_FIND(hh, uw_Dyncache_tableCheck, keyCheck, lenKeyCheck, entryCheck);
   if (entryCheck) {
     // If another thread has updated the cache for us, no need to create more
     // garbage; just free the value immediately and exit.
-    if (entryCheck->timeValid > entryCheck->entryFlush->timeInvalid) {
+    if (uw_Dyncache_valid(entryCheck)) {
       uw_Dyncache_freeValue(value);
       return entryCheck->value;
     }
     uw_Dyncache_pushFreeValue(entryCheck->value);
   } else {
     entryCheck = malloc(sizeof(uw_Dyncache_EntryCheck));
-    entryCheck->keyCheck = strdup(keyCheck);
-    uw_Dyncache_EntryFlush *entryFlush = NULL;
-    size_t lenKeyFlush = strlen(keyFlush);
-    HASH_FIND(hh, uw_Dyncache_tableFlush, keyFlush, lenKeyFlush, entryFlush);
-    if (!entryFlush) {
-      entryFlush = malloc(sizeof(uw_Dyncache_EntryFlush));
-      entryFlush->keyFlush = strdup(keyFlush);
-      entryFlush->timeInvalid = 0;
-      HASH_ADD_KEYPTR(hh, uw_Dyncache_tableFlush, keyFlush, lenKeyFlush, entryFlush);
+    entryCheck->key = strdup(keyCheck);
+    entryCheck->entriesFlush = malloc(numKeysFlush * sizeof(uw_Dyncache_EntryFlush *));
+    entryCheck->numEntriesFlush = numKeysFlush;
+    int i;
+    for(i = 0; i < numKeysFlush; i++) {
+      const char *keyFlush = keysFlush[i];
+      uw_Dyncache_EntryFlush *entryFlush = NULL;
+      size_t lenKeyFlush = strlen(keyFlush);
+      HASH_FIND(hh, uw_Dyncache_tableFlush, keyFlush, lenKeyFlush, entryFlush);
+      if (!entryFlush) {
+        entryFlush = malloc(sizeof(uw_Dyncache_EntryFlush));
+        entryFlush->key = strdup(keyFlush);
+        entryFlush->timeInvalid = 0;
+        HASH_ADD_KEYPTR(hh, uw_Dyncache_tableFlush, keyFlush, lenKeyFlush, entryFlush);
+      }
+      entryCheck->entriesFlush[i] = entryFlush;
     }
-    entryCheck->entryFlush = entryFlush;
     HASH_ADD_KEYPTR(hh, uw_Dyncache_tableCheck, keyCheck, lenKeyCheck, entryCheck);
   }
   entryCheck->timeValid = uw_Dyncache_getTimeNow();
