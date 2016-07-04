@@ -5147,3 +5147,153 @@ int strcmp_nullsafe(const char *str1, const char *str2) {
   else
     return 1;
 }
+
+
+// Dyncache, which uses [void *] to be compatible with any database backend.
+
+extern void uw_Dyncache_freeValue(void *);
+
+// We're not using any sort of locking, so we delay freeing values for at least
+// 1 second to allow in-flight requests that are using them to finish. We keep
+// these to-be-freed values in a garbage queue.
+
+typedef struct uw_Dyncache_Garbage {
+  void *value;
+  time_t timeFreed; // Wall clock time, not fake Dyncache time.
+  struct uw_Dyncache_Garbage *next;
+} uw_Dyncache_Garbage;
+
+uw_Dyncache_Garbage *uw_Dyncache_garbageHead = NULL;
+uw_Dyncache_Garbage *uw_Dyncache_garbageTail = NULL;
+unsigned int uw_Dyncache_garbageLength = 0;
+
+// Prevent data races in the garbage queue.
+pthread_mutex_t uw_Dyncache_garbageLock = PTHREAD_MUTEX_INITIALIZER;
+
+// Make sure there's only one garbage collector at a time.
+pthread_mutex_t uw_Dyncache_collectionLock = PTHREAD_MUTEX_INITIALIZER;
+
+static void uw_Dyncache_pushGarbage(uw_Dyncache_Garbage *garbage) {
+  pthread_mutex_lock(&uw_Dyncache_garbageLock);
+  ++uw_Dyncache_garbageLength;
+  if (uw_Dyncache_garbageTail) {
+    uw_Dyncache_garbageTail->next = garbage;
+  } else {
+    uw_Dyncache_garbageHead = garbage;
+  }
+  uw_Dyncache_garbageTail = garbage;
+  pthread_mutex_unlock(&uw_Dyncache_garbageLock);
+}
+
+static uw_Dyncache_Garbage *uw_Dyncache_popGarbage() {
+  pthread_mutex_lock(&uw_Dyncache_garbageLock);
+  --uw_Dyncache_garbageLength;
+  if (!uw_Dyncache_garbageHead) {
+    return NULL;
+  }
+  uw_Dyncache_Garbage *garbage = uw_Dyncache_garbageHead;
+  uw_Dyncache_garbageHead = uw_Dyncache_garbageHead->next;
+  pthread_mutex_unlock(&uw_Dyncache_garbageLock);
+  return garbage;
+}
+
+static void uw_Dyncache_collectGarbage() {
+  if (pthread_mutex_trylock(&uw_Dyncache_collectionLock) != 0) {
+    // Didn't get the lock, so another thread is collecting, so no need.
+    return;
+  }
+  unsigned int length = uw_Dyncache_garbageLength;
+  time_t timeNow = time(NULL);
+  while (length-- > 0) {
+    uw_Dyncache_Garbage *garbage = uw_Dyncache_popGarbage();
+    if (garbage->timeFreed >= timeNow - 2) {
+      // Garbage is too new: a request might still be using its result!
+      uw_Dyncache_pushGarbage(garbage);
+    } else {
+      uw_Dyncache_freeValue(garbage->value);
+      free(garbage);
+    }
+  }
+  pthread_mutex_unlock(&uw_Dyncache_collectionLock);
+}
+
+static void uw_Dyncache_pushFreeValue(void *value) {
+  // About to make more garbage, so it's only fair we offer to collect what's
+  // already there first :).
+  uw_Dyncache_collectGarbage();
+  uw_Dyncache_Garbage *garbage = malloc(sizeof(uw_Dyncache_Garbage));
+  garbage->value = value;
+  garbage->timeFreed = time(NULL);
+  garbage->next = NULL;
+  uw_Dyncache_pushGarbage(garbage);
+}
+
+typedef struct uw_Dyncache_EntryFlush {
+  char *keyFlush;
+  unsigned long timeInvalid;
+  UT_hash_handle hh;
+} uw_Dyncache_EntryFlush;
+
+typedef struct uw_Dyncache_EntryCheck {
+  char *keyCheck;
+  void *value;
+  unsigned long timeValid;
+  uw_Dyncache_EntryFlush *entryFlush;
+  UT_hash_handle hh;
+} uw_Dyncache_EntryCheck;
+
+uw_Dyncache_EntryCheck *uw_Dyncache_tableCheck = NULL;
+uw_Dyncache_EntryFlush *uw_Dyncache_tableFlush = NULL;
+unsigned long uw_Dyncache_timeNow = 0;
+
+static unsigned long uw_Dyncache_getTimeNow() {
+  return ++uw_Dyncache_timeNow;
+}
+
+void *uw_Dyncache_check(const char *keyCheck) {
+  uw_Dyncache_EntryCheck *entryCheck = NULL;
+  HASH_FIND(hh, uw_Dyncache_tableCheck, keyCheck, strlen(keyCheck), entryCheck);
+  return
+    entryCheck && entryCheck->timeValid > entryCheck->entryFlush->timeInvalid
+    ? entryCheck->value
+    : NULL;
+}
+
+void uw_Dyncache_store(const char *keyCheck, const char *keyFlush, void *value) {
+  uw_Dyncache_EntryCheck *entryCheck = NULL;
+  size_t lenKeyCheck = strlen(keyCheck);
+  HASH_FIND(hh, uw_Dyncache_tableCheck, keyCheck, lenKeyCheck, entryCheck);
+  if (entryCheck) {
+    // If another thread has updated the cache for us, no need to create more
+    // garbage; just free the value immediately and exit.
+    if (entryCheck->timeValid <= entryCheck->entryFlush->timeInvalid) {
+      uw_Dyncache_freeValue(value);
+      return;
+    }
+    uw_Dyncache_pushFreeValue(entryCheck->value);
+  } else {
+    entryCheck = malloc(sizeof(uw_Dyncache_EntryCheck));
+    entryCheck->keyCheck = strdup(keyCheck);
+    uw_Dyncache_EntryFlush *entryFlush = NULL;
+    size_t lenKeyFlush = strlen(keyFlush);
+    HASH_FIND(hh, uw_Dyncache_tableFlush, keyFlush, lenKeyFlush, entryFlush);
+    if (!entryFlush) {
+      entryFlush = malloc(sizeof(uw_Dyncache_EntryFlush));
+      entryFlush->keyFlush = strdup(keyFlush);
+      entryFlush->timeInvalid = 0;
+      HASH_ADD_KEYPTR(hh, uw_Dyncache_tableFlush, keyFlush, lenKeyFlush, entryFlush);
+    }
+    entryCheck->entryFlush = entryFlush;
+    HASH_ADD_KEYPTR(hh, uw_Dyncache_tableCheck, keyCheck, lenKeyCheck, entryCheck);
+  }
+  entryCheck->timeValid = uw_Dyncache_getTimeNow();
+  entryCheck->value = value;
+}
+
+void uw_Dyncache_flush(const char *keyFlush) {
+  uw_Dyncache_EntryFlush *entryFlush = NULL;
+  HASH_FIND(hh, uw_Dyncache_tableFlush, keyFlush, strlen(keyFlush), entryFlush);
+  if (entryFlush) {
+    entryFlush->timeInvalid = uw_Dyncache_getTimeNow();
+  }
+}
