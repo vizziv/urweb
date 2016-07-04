@@ -5161,9 +5161,7 @@ int strcmp_nullsafe(const char *str1, const char *str2) {
 
 // Dyncache, which uses [void *] to be compatible with any database backend.
 
-static void uw_Dyncache_freeValue(void *value) {
-  free(value);
-}
+extern void uw_Dyncache_freeValue(void *value);
 
 // We're not using any sort of locking, so we delay freeing values for at least
 // 1 second to allow in-flight requests that are using them to finish. We keep
