@@ -5193,6 +5193,9 @@ static uw_Dyncache_Garbage *uw_Dyncache_popGarbage() {
   }
   uw_Dyncache_Garbage *garbage = uw_Dyncache_garbageHead;
   uw_Dyncache_garbageHead = uw_Dyncache_garbageHead->next;
+  if (!uw_Dyncache_garbageHead) {
+    uw_Dyncache_garbageTail = NULL;
+  }
   pthread_mutex_unlock(&uw_Dyncache_garbageLock);
   return garbage;
 }
@@ -5202,18 +5205,22 @@ static void uw_Dyncache_collectGarbage() {
     // Didn't get the lock, so another thread is collecting, so no need.
     return;
   }
+  // DEBUG: printf("gc: start length %i\n", uw_Dyncache_garbageLength);
   unsigned int length = uw_Dyncache_garbageLength;
   time_t timeNow = time(NULL);
   while (length-- > 0) {
     uw_Dyncache_Garbage *garbage = uw_Dyncache_popGarbage();
     if (garbage->timeFreed >= timeNow - 2) {
       // Garbage is too new: a request might still be using its result!
+      // DEBUG: printf("keep: %p\n", garbage->value);
       uw_Dyncache_pushGarbage(garbage);
     } else {
+      // DEBUG: printf("free: %p\n", garbage->value);
       uw_Dyncache_freeValue(garbage->value);
       free(garbage);
     }
   }
+  // DEBUG: printf("gc: end length %i\n", uw_Dyncache_garbageLength);
   pthread_mutex_unlock(&uw_Dyncache_collectionLock);
 }
 
@@ -5251,24 +5258,33 @@ static unsigned long uw_Dyncache_getTimeNow() {
 }
 
 void *uw_Dyncache_check(const char *keyCheck) {
+  // DEBUG: printf("check: %s\n", keyCheck);
   uw_Dyncache_EntryCheck *entryCheck = NULL;
   HASH_FIND(hh, uw_Dyncache_tableCheck, keyCheck, strlen(keyCheck), entryCheck);
-  return
+  void *value =
     entryCheck && entryCheck->timeValid > entryCheck->entryFlush->timeInvalid
     ? entryCheck->value
     : NULL;
+  if (value) {
+    // DEBUG: printf("hit: %p\n", value);
+  } else {
+    // DEBUG: printf("miss: ...\n");
+  }
+  return value;
 }
 
-void uw_Dyncache_store(const char *keyCheck, const char *keyFlush, void *value) {
+// Returns something equivalent but not physically (pointerly) equal to [value].
+void *uw_Dyncache_store(const char *keyCheck, const char *keyFlush, void *value) {
+  // DEBUG: printf("store: %s %s %p\n", keyCheck, keyFlush, value);
   uw_Dyncache_EntryCheck *entryCheck = NULL;
   size_t lenKeyCheck = strlen(keyCheck);
   HASH_FIND(hh, uw_Dyncache_tableCheck, keyCheck, lenKeyCheck, entryCheck);
   if (entryCheck) {
     // If another thread has updated the cache for us, no need to create more
     // garbage; just free the value immediately and exit.
-    if (entryCheck->timeValid <= entryCheck->entryFlush->timeInvalid) {
+    if (entryCheck->timeValid > entryCheck->entryFlush->timeInvalid) {
       uw_Dyncache_freeValue(value);
-      return;
+      return entryCheck->value;
     }
     uw_Dyncache_pushFreeValue(entryCheck->value);
   } else {
@@ -5288,9 +5304,11 @@ void uw_Dyncache_store(const char *keyCheck, const char *keyFlush, void *value) 
   }
   entryCheck->timeValid = uw_Dyncache_getTimeNow();
   entryCheck->value = value;
+  return value;
 }
 
 void uw_Dyncache_flush(const char *keyFlush) {
+  // DEBUG: printf("flush: %s\n", keyFlush);
   uw_Dyncache_EntryFlush *entryFlush = NULL;
   HASH_FIND(hh, uw_Dyncache_tableFlush, keyFlush, strlen(keyFlush), entryFlush);
   if (entryFlush) {
