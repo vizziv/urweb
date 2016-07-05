@@ -5202,6 +5202,7 @@ static uw_Dyncache_Garbage *uw_Dyncache_popGarbage() {
   pthread_mutex_lock(&uw_Dyncache_garbageLock);
   --uw_Dyncache_garbageLength;
   if (!uw_Dyncache_garbageHead) {
+    pthread_mutex_unlock(&uw_Dyncache_garbageLock);
     return NULL;
   }
   uw_Dyncache_Garbage *garbage = uw_Dyncache_garbageHead;
@@ -5286,6 +5287,8 @@ static int uw_Dyncache_valid(uw_Dyncache_EntryCheck *entryCheck) {
   return 1;
 }
 
+static pthread_mutex_t one_big_lock = PTHREAD_MUTEX_INITIALIZER;
+
 void *uw_Dyncache_check(const char *keyCheck) {
   // DEBUG: printf("check: %s\n", keyCheck);
   uw_Dyncache_EntryCheck *entryCheck = NULL;
@@ -5305,12 +5308,14 @@ void *uw_Dyncache_store(const char *keyCheck, const char **keysFlush, int numKey
   // DEBUG: printf("store: %s %s %p [only one flush key shown]\n", keyCheck, keysFlush[0], value);
   uw_Dyncache_EntryCheck *entryCheck = NULL;
   size_t lenKeyCheck = strlen(keyCheck);
+  pthread_mutex_lock(&one_big_lock);
   HASH_FIND(hh, uw_Dyncache_tableCheck, keyCheck, lenKeyCheck, entryCheck);
   if (entryCheck) {
     // If another thread has updated the cache for us, no need to create more
     // garbage; just free the value immediately and exit.
     if (uw_Dyncache_valid(entryCheck)) {
       uw_Dyncache_freeValue(value);
+      pthread_mutex_unlock(&one_big_lock);
       return entryCheck->value;
     }
     uw_Dyncache_pushFreeValue(entryCheck->value);
@@ -5337,6 +5342,7 @@ void *uw_Dyncache_store(const char *keyCheck, const char **keysFlush, int numKey
   }
   entryCheck->timeValid = uw_Dyncache_getTimeNow();
   entryCheck->value = value;
+  pthread_mutex_unlock(&one_big_lock);
   return value;
 }
 
