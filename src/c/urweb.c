@@ -5334,11 +5334,11 @@ void *uw_Dyncache_store(const char *keyCheck, const char **keysFlush, int numKey
         entryFlush = malloc(sizeof(uw_Dyncache_EntryFlush));
         entryFlush->key = strdup(keyFlush);
         entryFlush->timeInvalid = 0;
-        HASH_ADD_KEYPTR(hh, uw_Dyncache_tableFlush, keyFlush, lenKeyFlush, entryFlush);
+        HASH_ADD_KEYPTR(hh, uw_Dyncache_tableFlush, entryFlush->key, lenKeyFlush, entryFlush);
       }
       entryCheck->entriesFlush[i] = entryFlush;
     }
-    HASH_ADD_KEYPTR(hh, uw_Dyncache_tableCheck, keyCheck, lenKeyCheck, entryCheck);
+    HASH_ADD_KEYPTR(hh, uw_Dyncache_tableCheck, entryCheck->key, lenKeyCheck, entryCheck);
   }
   entryCheck->timeValid = uw_Dyncache_getTimeNow();
   entryCheck->value = value;
