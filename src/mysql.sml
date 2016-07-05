@@ -630,6 +630,11 @@ fun init {dbstring, prepared = ss, tables, views, sequences} =
              newline,
              string "}",
              newline,
+             newline,
+
+             (* No Dyncache for mysql at the moment. *)
+             string "void uw_Dyncache_freeValue(void *value) {}",
+             newline,
              newline]
     end
 

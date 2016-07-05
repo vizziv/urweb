@@ -298,6 +298,9 @@ signature SETTINGS = sig
     val setSqlcacheAutotuning : bool -> unit
     val getSqlcacheAutotuning : unit -> bool
 
+    val setDyncache : bool -> unit
+    val getDyncache : unit -> bool
+
     val setFilePath : string -> unit
     (* Sets the directory where we look for files being added below. *)
 

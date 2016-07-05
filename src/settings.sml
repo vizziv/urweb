@@ -841,6 +841,10 @@ val sqlcacheAutotuning = ref true
 fun setSqlcacheAutotuning b = sqlcacheAutotuning := b
 fun getSqlcacheAutotuning () = !sqlcacheAutotuning
 
+val dyncache = ref false
+fun setDyncache b = dyncache := b
+fun getDyncache () = !dyncache
+
 structure SM = BinaryMapFn(struct
                            type ord_key = string
                            val compare = String.compare

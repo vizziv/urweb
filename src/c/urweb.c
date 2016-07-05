@@ -4742,7 +4742,7 @@ static char *uw_Sqlcache_allocKeyBuffer(uw_Sqlcache_Cache *cache, char **keys) {
   for (iLevel = 0; iLevel < cache->numLevels; iLevel++) {
     size_t iKey;
     for (iKey = 0; iKey < cache->numKeysInLevel[iLevel]; iKey++) {
-      char* k = keys[cache->keyLevels[iLevel][iKey]];
+      char *k = keys[cache->keyLevels[iLevel][iKey]];
       if (!k) {
         // Can only happen when flushing, in which case we don't need anything past the null key.
         break;
@@ -4757,7 +4757,7 @@ static char *uw_Sqlcache_allocKeyBuffer(uw_Sqlcache_Cache *cache, char **keys) {
   return buf;
 }
 
-static char *uw_Sqlcache_keyCopy(char *buf, char *key) {
+static char *uw_Sqlcache_keyCopy(char *buf, const char *key) {
   *buf++ = uw_Sqlcache_keySep;
   return stpcpy(buf, key);
 }
@@ -5161,7 +5161,7 @@ int strcmp_nullsafe(const char *str1, const char *str2) {
 
 // Dyncache, which uses [void *] to be compatible with any database backend.
 
-extern void uw_Dyncache_freeValue(void *value);
+extern void uw_Dyncache_freeValue(void *);
 
 // We're not using any sort of locking, so we delay freeing values for at least
 // 1 second to allow in-flight requests that are using them to finish. We keep
@@ -5347,13 +5347,13 @@ void uw_Dyncache_flush(const char *keyFlush) {
 static char uw_Dyncache_keySep = '_';
 
 char *uw_Dyncache_keyCheckPrepared(const char *id,
-                                   size_t numParams,
+                                   int numParams,
                                    const char **params,
                                    const int *paramLengths) {
   size_t len = strlen(id);
   int i;
   for (i = 0; i < numParams; i++) {
-    len += paramLengths[i] + 1;
+    len += strlen(params[i]) + 1;
   }
   char *key = malloc(len + 1);
   char *buf = stpcpy(key, id);

@@ -531,7 +531,14 @@ fun init {dbstring, prepared = ss, tables, views, sequences} =
          newline,
          string "uw_db_prepare(ctx);",
          newline,
-         string "}"]
+         string "}",
+         newline,
+         newline,
+
+         (* For Dyncache. *)
+         string "void uw_Dyncache_freeValue(void *value) {PQclear((PGresult *) value);}",
+         newline,
+         newline]
 
 fun p_getcol {loc, wontLeakStrings, col = i, typ = t} =
     let
@@ -612,7 +619,7 @@ fun p_getcol {loc, wontLeakStrings, col = i, typ = t} =
         getter t
     end
 
-fun queryCommon {loc, query, cols, doCols} =
+fun queryCommon {loc, query, cols, doCols, tableNames} =
     box [string "int n, i;",
          newline,
          newline,
@@ -679,7 +686,29 @@ fun queryCommon {loc, query, cols, doCols} =
 
          string "uw_end_region(ctx);",
          newline,
-         string "uw_push_cleanup(ctx, (void (*)(void *))PQclear, res);",
+         if Settings.getDyncache () then
+             box [string "if (dyncacheMiss) {",
+                  newline,
+                  box (ListUtil.mapi
+                           (fn (i, name) => string ("  char *dyncacheKeyFlush" ^ Int.toString i ^ " = \"" ^ name ^ "\";"))
+                           tableNames),
+                  newline,
+                  string "  const char *dyncacheKeysFlush[] = {",
+                  box (ListUtil.mapi
+                           (fn (0, _) => string ("dyncacheKeyFlush0") (* no leading comma *)
+                             | (i, _) => string (", dyncacheKeyFlush" ^ Int.toString i))
+                           tableNames),
+                  string "  };",
+                  newline,
+                  string ("  int dyncacheNumKeysFlush = " ^ Int.toString (length tableNames) ^ ";"),
+                  newline,
+                  (* Possibly reassign [res] to a value that has since been inserted into the cache. *)
+                  string "  res = uw_Dyncache_store(dyncacheKeyCheck, dyncacheKeysFlush, dyncacheNumKeysFlush, res);",
+                  newline,
+                  string "}",
+                  newline]
+         else
+             string "uw_push_cleanup(ctx, (void (*)(void *))PQclear, res);",
          newline,
          string "n = PQntuples(res);",
          newline,
@@ -689,16 +718,43 @@ fun queryCommon {loc, query, cols, doCols} =
          string "}",
          newline,
          newline,
-         string "uw_pop_cleanup(ctx);",
+         if Settings.getDyncache () then
+             string ""
+         else
+             string "uw_pop_cleanup(ctx);",
          newline]
 
+fun execQuery queryCall =
+    if Settings.getDyncache () then
+        box [string "PGresult *res = uw_Dyncache_check(dyncacheKeyCheck);",
+             newline,
+             string "int dyncacheMiss = 0;",
+             newline,
+             string "if (!res) {",
+             newline,
+             string "  res = ",
+             queryCall,
+             string ";",
+             newline,
+             string "  dyncacheMiss = 1;",
+             string "}",
+             newline]
+    else
+        box [string "PGresult *res = ",
+             queryCall,
+             string ";",
+             newline]
+
 fun query {loc, cols, doCols, tableNames} =
-    box [string "PGconn *conn = uw_get_db(ctx);",
+    box [if Settings.getDyncache () then
+             string "char *dyncacheKeyCheck = query;"
+         else
+             string "",
+         string "PGconn *conn = uw_get_db(ctx);",
          newline,
-         string "PGresult *res = PQexecParams(conn, query, 0, NULL, NULL, NULL, NULL, 0);",
+         execQuery (string "PQexecParams(conn, query, 0, NULL, NULL, NULL, NULL, 0)"),
          newline,
-         newline,
-         queryCommon {loc = loc, cols = cols, doCols = doCols, query = string "query"}]
+         queryCommon {loc = loc, cols = cols, doCols = doCols, query = string "query", tableNames = tableNames}]
 
 fun p_ensql t e =
     case t of
@@ -768,24 +824,41 @@ fun queryPrepared {loc, id, query, inputs, cols, doCols, nested = _, tableNames}
          makeParams inputs,
 
          newline,
-         string "PGresult *res = ",
-         if #persistent (Settings.currentProtocol ()) then
-             box [string "PQexecPrepared(conn, \"uw",
+         if Settings.getDyncache () then
+             box [string "char *dyncacheKeyCheck = uw_Dyncache_keyCheckPrepared(\"",
                   string (Int.toString id),
                   string "\", ",
                   string (Int.toString (length inputs)),
-                  string ", paramValues, paramLengths, paramFormats, 0);"]
+                  string ", paramValues, paramLengths);",
+                  newline,
+                  string "uw_push_cleanup(ctx, free, dyncacheKeyCheck);",
+                  newline]
          else
-             box [string "PQexecParams(conn, \"",
-                  string (Prim.toCString query),
-                  string "\", ",
-                  string (Int.toString (length inputs)),
-                  string ", NULL, paramValues, paramLengths, paramFormats, 0);"],
+             string "",
+         execQuery
+             (if #persistent (Settings.currentProtocol ()) then
+                  box [string "PQexecPrepared(conn, \"uw",
+                       string (Int.toString id),
+                       string "\", ",
+                       string (Int.toString (length inputs)),
+                       string ", paramValues, paramLengths, paramFormats, 0);"]
+              else
+                  box [string "PQexecParams(conn, \"",
+                       string (Prim.toCString query),
+                       string "\", ",
+                       string (Int.toString (length inputs)),
+                       string ", NULL, paramValues, paramLengths, paramFormats, 0);"]),
          newline,
          newline,
-         queryCommon {loc = loc, cols = cols, doCols = doCols, query = box [string "\"",
-                                                                            string (Prim.toCString query),
-                                                                            string "\""]}]
+         queryCommon {loc = loc, cols = cols, doCols = doCols,
+                      query = box [string "\"",
+                                   string (Prim.toCString query),
+                                   string "\""],
+                      tableNames = tableNames},
+         if Settings.getDyncache () then
+             string "uw_pop_cleanup(ctx);"
+         else
+             string ""]
 
 fun dmlCommon {loc, dml, mode} =
     box [string "if (res == NULL) {",

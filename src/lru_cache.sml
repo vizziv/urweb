@@ -153,7 +153,7 @@ fun setupQuery {index, keyLevels} =
              string ("static uw_Basis_string uw_Sqlcache_check" ^ i
                      ^ "(uw_context ctx" ^ typedArgs ^ ") {"),
              newline,
-             string ("  char *ks[] = {" ^ args ^ "};"),
+             string ("  const char *ks[] = {" ^ args ^ "};"),
              newline,
              string ("  uw_Sqlcache_Value *v = uw_Sqlcache_check(ctx, cache" ^ i ^ ", ks);"),
              newline,
@@ -194,7 +194,7 @@ fun setupQuery {index, keyLevels} =
              string ("static uw_unit uw_Sqlcache_store" ^ i
                      ^ "(uw_context ctx, uw_Basis_string s" ^ typedArgs ^ ") {"),
              newline,
-             string ("  char *ks[] = {" ^ args ^ "};"),
+             string ("  const char *ks[] = {" ^ args ^ "};"),
              newline,
              string ("  uw_Sqlcache_Value *v = calloc(1, sizeof(uw_Sqlcache_Value));"),
              newline,
@@ -225,7 +225,7 @@ fun setupQuery {index, keyLevels} =
              string ("static uw_unit uw_Sqlcache_flush" ^ i
                      ^ "(uw_context ctx" ^ typedArgs ^ ") {"),
              newline,
-             string ("  char *ks[] = {" ^ args ^ "};"),
+             string ("  const char *ks[] = {" ^ args ^ "};"),
              newline,
              string ("  uw_Sqlcache_flush(ctx, cache" ^ i ^ ", ks);"),
              newline,

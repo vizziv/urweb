@@ -168,6 +168,9 @@ fun oneRun args =
               | "-sqlcacheHeuristic" :: h :: rest =>
                 (Sqlcache.setHeuristic h;
                  doArgs rest)
+              | "-dyncache" :: rest =>
+                (Settings.setDyncache true;
+                 doArgs rest)
               | "-moduleOf" :: fname :: _ =>
                 (print (Compiler.moduleOf fname ^ "\n");
                  raise Code OS.Process.success)

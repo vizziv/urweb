@@ -426,10 +426,17 @@ void uw_Basis_writec(struct uw_context *, char);
 
 void *uw_Sqlcache_rlock(struct uw_context *, uw_Sqlcache_Cache *);
 void *uw_Sqlcache_wlock(struct uw_context *, uw_Sqlcache_Cache *);
-uw_Sqlcache_Value *uw_Sqlcache_check(struct uw_context *, uw_Sqlcache_Cache *, char **);
-void *uw_Sqlcache_store(struct uw_context *, uw_Sqlcache_Cache *, char **, uw_Sqlcache_Value *);
-void *uw_Sqlcache_flush(struct uw_context *, uw_Sqlcache_Cache *, char **);
+uw_Sqlcache_Value *uw_Sqlcache_check(struct uw_context *, uw_Sqlcache_Cache *, const char **);
+void *uw_Sqlcache_store(struct uw_context *, uw_Sqlcache_Cache *, const char **, uw_Sqlcache_Value *);
+void *uw_Sqlcache_flush(struct uw_context *, uw_Sqlcache_Cache *, const char **);
 
 int strcmp_nullsafe(const char *, const char *);
+
+// Dynache.
+
+void *uw_Dyncache_check(const char *);
+void *uw_Dyncache_store(const char *, const char **, int, void *);
+void uw_Dyncache_flush(const char *);
+char *uw_Dyncache_keyCheckPrepared(const char *, int, const char **, const int *);
 
 #endif
