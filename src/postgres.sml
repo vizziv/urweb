@@ -686,7 +686,8 @@ fun queryCommon {loc, query, cols, doCols, tableNames} =
 
          string "uw_end_region(ctx);",
          newline,
-         if Settings.getDyncache () then
+         case (Settings.getDyncache (), tableNames) of
+             (true, SOME tableNames) =>
              box [string "if (dyncacheMiss) {",
                   newline,
                   box (ListUtil.mapi
@@ -707,8 +708,8 @@ fun queryCommon {loc, query, cols, doCols, tableNames} =
                   newline,
                   string "}",
                   newline]
-         else
-             string "uw_push_cleanup(ctx, (void (*)(void *))PQclear, res);",
+          | _ =>
+            string "uw_push_cleanup(ctx, (void (*)(void *))PQclear, res);",
          newline,
          string "n = PQntuples(res);",
          newline,
@@ -718,14 +719,16 @@ fun queryCommon {loc, query, cols, doCols, tableNames} =
          string "}",
          newline,
          newline,
-         if Settings.getDyncache () then
+         case (Settings.getDyncache (), tableNames) of
+             (true, SOME tableNames) =>
              string ""
-         else
+           | _ =>
              string "uw_pop_cleanup(ctx);",
          newline]
 
-fun execQuery queryCall =
-    if Settings.getDyncache () then
+fun execQuery (tableNames, queryCall) =
+    case (Settings.getDyncache (), tableNames) of
+        (true, SOME tableNames) =>
         box [string "PGresult *res = uw_Dyncache_check(dyncacheKeyCheck);",
              newline,
              string "int dyncacheMiss = 0;",
@@ -739,20 +742,21 @@ fun execQuery queryCall =
              string "  dyncacheMiss = 1;",
              string "}",
              newline]
-    else
+      | _ =>
         box [string "PGresult *res = ",
              queryCall,
              string ";",
              newline]
 
 fun query {loc, cols, doCols, tableNames} =
-    box [if Settings.getDyncache () then
+    box [case (Settings.getDyncache (), tableNames) of
+             (true, SOME tableNames) =>
              string "char *dyncacheKeyCheck = query;"
-         else
+           | _ =>
              string "",
          string "PGconn *conn = uw_get_db(ctx);",
          newline,
-         execQuery (string "PQexecParams(conn, query, 0, NULL, NULL, NULL, NULL, 0)"),
+         execQuery (tableNames, string "PQexecParams(conn, query, 0, NULL, NULL, NULL, NULL, 0)"),
          newline,
          queryCommon {loc = loc, cols = cols, doCols = doCols, query = string "query", tableNames = tableNames}]
 
@@ -824,7 +828,8 @@ fun queryPrepared {loc, id, query, inputs, cols, doCols, nested = _, tableNames}
          makeParams inputs,
 
          newline,
-         if Settings.getDyncache () then
+         case (Settings.getDyncache (), tableNames) of
+             (true, SOME tableNames) =>
              box [string "char *dyncacheKeyCheck = uw_Dyncache_keyCheckPrepared(\"",
                   string (Int.toString id),
                   string "\", ",
@@ -833,10 +838,11 @@ fun queryPrepared {loc, id, query, inputs, cols, doCols, nested = _, tableNames}
                   newline,
                   string "uw_push_cleanup(ctx, free, dyncacheKeyCheck);",
                   newline]
-         else
+           | _ =>
              string "",
          execQuery
-             (if #persistent (Settings.currentProtocol ()) then
+             (tableNames,
+              if #persistent (Settings.currentProtocol ()) then
                   box [string "PQexecPrepared(conn, \"uw",
                        string (Int.toString id),
                        string "\", ",
@@ -855,9 +861,10 @@ fun queryPrepared {loc, id, query, inputs, cols, doCols, nested = _, tableNames}
                                    string (Prim.toCString query),
                                    string "\""],
                       tableNames = tableNames},
-         if Settings.getDyncache () then
+         case (Settings.getDyncache (), tableNames) of
+             (true, SOME tableNames) =>
              string "uw_pop_cleanup(ctx);"
-         else
+           | _ =>
              string ""]
 
 fun dmlCommon {loc, dml, mode} =

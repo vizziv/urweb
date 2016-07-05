@@ -188,14 +188,14 @@ signature SETTINGS = sig
          query : {loc : ErrorMsg.span, cols : sql_type list,
                   doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int, typ : sql_type} -> Print.PD.pp_desc)
                            -> Print.PD.pp_desc,
-                  tableNames : string list}
+                  tableNames : string list option}
                  -> Print.PD.pp_desc,
          queryPrepared : {loc : ErrorMsg.span, id : int, query : string,
                           inputs : sql_type list, cols : sql_type list,
                           doCols : ({loc : ErrorMsg.span, wontLeakStrings : bool, col : int,
                                      typ : sql_type} -> Print.PD.pp_desc)
                                    -> Print.PD.pp_desc,
-                          nested : bool, tableNames : string list}
+                          nested : bool, tableNames : string list option}
                          -> Print.PD.pp_desc,
          dml : {loc : ErrorMsg.span, mode : failure_mode, tableName : string} -> Print.PD.pp_desc,
          dmlPrepared : {loc : ErrorMsg.span, id : int, dml : string,

@@ -2014,11 +2014,9 @@ and p_exp' par tail env (e, loc) =
             (* For Dyncache. *)
             val tableNames =
                 if Settings.getDyncache () then
-                    case Sql.queryTableNames query of
-                        SOME names => names
-                      | NONE => raise Fail "CjrPrint: malformed query for Dyncache"
+                    Sql.queryTableNames query
                 else
-                    []
+                    NONE
 
             val tables = ListUtil.mapConcat (fn (x, xts) =>
                                                 map (fn (x', t) => ("__uwf_" ^ ident x ^ ".__uwf_" ^ ident x', t)) xts)
