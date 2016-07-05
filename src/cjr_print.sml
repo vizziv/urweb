@@ -2010,6 +2010,9 @@ and p_exp' par tail env (e, loc) =
       | EQuery {exps, tables, rnum, state, query, body, initial, prepared} =>
         let
             val exps = map (fn (x, t) => ("__uwf_" ^ ident x, t)) exps
+
+            val tableNames = map (String.map Char.toLower o #1) tables
+
             val tables = ListUtil.mapConcat (fn (x, xts) =>
                                                 map (fn (x', t) => ("__uwf_" ^ ident x ^ ".__uwf_" ^ ident x', t)) xts)
                                             tables
@@ -2024,8 +2027,6 @@ and p_exp' par tail env (e, loc) =
                 case prepared of
                     NONE => []
                   | SOME _ => getPargs query
-
-            val tableNames = map #1 tables
 
             fun doCols p_getcol =
                 box [string "struct __uws_",
@@ -2168,7 +2169,7 @@ and p_exp' par tail env (e, loc) =
                               let
                                   val tableName =
                                       case Sql.dmlTableName dml of
-                                          SOME name => name
+                                          SOME name => String.map Char.toLower name
                                         | NONE => raise Fail "CjrPrint: malformed DML"
                               in
                                   #dml (Settings.currentDbms ()) {loc = loc, mode = mode, tableName = tableName}
