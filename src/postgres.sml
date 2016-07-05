@@ -998,6 +998,10 @@ fun makeSavepoint mode =
 fun dml {loc, mode, tableName} =
     box [string "PGconn *conn = uw_get_db(ctx);",
          newline,
+
+         string ("uw_Dyncache_flush(\"" ^ tableName ^ "\");"),
+         newline,
+
          string "PGresult *res;",
          newline,
 
@@ -1010,6 +1014,9 @@ fun dml {loc, mode, tableName} =
 
 fun dmlPrepared {loc, id, dml, inputs, mode, tableName} =
     box [string "PGconn *conn = uw_get_db(ctx);",
+         newline,
+
+         string ("uw_Dyncache_flush(\"" ^ tableName ^ "\");"),
          newline,
 
          makeParams inputs,
