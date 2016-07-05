@@ -5183,6 +5183,9 @@ pthread_mutex_t uw_Dyncache_garbageLock = PTHREAD_MUTEX_INITIALIZER;
 // Make sure there's only one garbage collector at a time.
 pthread_mutex_t uw_Dyncache_collectionLock = PTHREAD_MUTEX_INITIALIZER;
 
+// Don't collect garbage too frequently.
+time_t uw_Dyncache_timeLastCollection = 0;
+
 static void uw_Dyncache_pushGarbage(uw_Dyncache_Garbage *garbage) {
   pthread_mutex_lock(&uw_Dyncache_garbageLock);
   ++uw_Dyncache_garbageLength;
@@ -5211,13 +5214,15 @@ static uw_Dyncache_Garbage *uw_Dyncache_popGarbage() {
 }
 
 static void uw_Dyncache_collectGarbage() {
-  if (pthread_mutex_trylock(&uw_Dyncache_collectionLock) != 0) {
+  time_t timeNow = time(NULL);
+  if (uw_Dyncache_timeLastCollection >= timeNow - 2
+      || pthread_mutex_trylock(&uw_Dyncache_collectionLock) != 0) {
     // Didn't get the lock, so another thread is collecting, so no need.
     return;
   }
+  uw_Dyncache_timeLastCollection = timeNow;
   // DEBUG: printf("gc: start length %i\n", uw_Dyncache_garbageLength);
   unsigned int length = uw_Dyncache_garbageLength;
-  time_t timeNow = time(NULL);
   while (length-- > 0) {
     uw_Dyncache_Garbage *garbage = uw_Dyncache_popGarbage();
     if (garbage->timeFreed >= timeNow - 2) {
