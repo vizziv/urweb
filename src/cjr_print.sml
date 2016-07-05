@@ -2011,7 +2011,14 @@ and p_exp' par tail env (e, loc) =
         let
             val exps = map (fn (x, t) => ("__uwf_" ^ ident x, t)) exps
 
-            val tableNames = map (String.map Char.toLower o #1) tables
+            (* For Dyncache. *)
+            val tableNames =
+                if Settings.getDyncache () then
+                    case Sql.queryTableNames query of
+                        SOME names => names
+                      | NONE => raise Fail "CjrPrint: malformed query for Dyncache"
+                else
+                    []
 
             val tables = ListUtil.mapConcat (fn (x, xts) =>
                                                 map (fn (x', t) => ("__uwf_" ^ ident x ^ ".__uwf_" ^ ident x', t)) xts)
@@ -2167,20 +2174,28 @@ and p_exp' par tail env (e, loc) =
                               newline,
                               newline,
                               let
+                                  (* For Dyncache. *)
                                   val tableName =
-                                      case Sql.dmlTableName dml of
-                                          SOME name => String.map Char.toLower name
-                                        | NONE => raise Fail "CjrPrint: malformed DML"
+                                      if Settings.getDyncache () then
+                                          case Sql.dmlTableName dml of
+                                              SOME name => name
+                                            | NONE => raise Fail "CjrPrint: malformed DML for Dyncache"
+                                      else
+                                          ""
                               in
                                   #dml (Settings.currentDbms ()) {loc = loc, mode = mode, tableName = tableName}
                               end]
                | SOME {id, dml = dml'} =>
                  let
                      val inputs = getPargs dml
+                     (* For Dyncache. *)
                      val tableName =
-                         case Sql.dmlTableName dml of
-                             SOME name => name
-                           | NONE => raise Fail "CjrPrint: malformed DML"
+                         if Settings.getDyncache () then
+                             case Sql.dmlTableName dml of
+                                 SOME name => name
+                               | NONE => raise Fail "CjrPrint: malformed DML for Dyncache"
+                         else
+                             ""
                  in
                      box [p_list_sepi newline
                                       (fn i => fn (e, t) =>

@@ -1,6 +1,7 @@
 database host=localhost
 sql bench.sql
 safeGet Bench/flush
+safeGet Bench/fresh
 minHeap 4096
 
 bench

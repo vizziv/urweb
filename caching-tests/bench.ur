@@ -14,3 +14,9 @@ fun flush id =
     return <xml><body>
       Incremented value at {[id]} (if it exists).
     </body></xml>
+
+fun fresh id =
+    dml (INSERT INTO tab (Id, Val) VALUES ({[id]}, 0));
+    return <xml><body>
+      Initialized value at {[id]} to 0.
+    </body></xml>

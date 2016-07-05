@@ -515,33 +515,6 @@ datatype querydml =
 
 val querydml = log "querydml" (altL [wrap dml Dml, wrap query Query])
 
-fun dmlTableName e =
-    let
-        fun chunkifyCjr e =
-            case #1 e of
-                Cjr.EPrim (Prim.String (_, s)) => [String s]
-              | Cjr.EFfiApp ("Basis", "strcat", [(e1, _), (e2, _)]) =>
-                let
-                    val chs1 = chunkifyCjr e1
-                    val chs2 = chunkifyCjr e2
-                in
-                    case chs2 of
-                        String s2 :: chs2' =>
-                        (case List.last chs1 of
-                             String s1 => List.take (chs1, length chs1 - 1) @ String (s1 ^ s2) :: chs2'
-                           | _ => chs1 @ chs2)
-                      | _ => chs1 @ chs2
-                end
-              (* HACK: we don't care about the Cjr expression, so we just make
-                 up a random Mono one to replace it. *)
-              | _ => [Exp (ERel 0, ErrorMsg.dummySpan)]
-        val parser = follow (altL (map const ["INSERT INTO ", "DELETE FROM ", "UPDATE "])) uw_ident
-    in
-        case parser (chunkifyCjr e) of
-            SOME ((_, name), _) => SOME name
-          | _ => NONE
-    end
-
 fun sqexpContainsImpure e =
     case e of
         SqConst _ => false
@@ -585,5 +558,57 @@ and fitemContainsImpure fi =
         orelse fitemContainsImpure fi2
         orelse sqexpContainsImpure e
       | Nested (q, _) => containsImpure q
+
+(* Hacky Cjr support for Dyncache. *)
+
+fun chunkifyCjr e =
+    case #1 e of
+        Cjr.EPrim (Prim.String (_, s)) => [String s]
+      | Cjr.EFfiApp ("Basis", "strcat", [(e1, _), (e2, _)]) =>
+        let
+            val chs1 = chunkifyCjr e1
+            val chs2 = chunkifyCjr e2
+        in
+            case chs2 of
+                String s2 :: chs2' =>
+                (case List.last chs1 of
+                     String s1 => List.take (chs1, length chs1 - 1) @ String (s1 ^ s2) :: chs2'
+                   | _ => chs1 @ chs2)
+              | _ => chs1 @ chs2
+        end
+      (* HACK: we don't care about the Cjr expression, so we just make
+                 up a random Mono one to replace it. *)
+      | _ => [Exp (ERel 0, ErrorMsg.dummySpan)]
+
+fun dmlTableName e =
+    let
+        val parser = follow (altL (map const ["INSERT INTO ", "DELETE FROM ", "UPDATE "])) uw_ident
+    in
+        case parser (chunkifyCjr e) of
+            SOME ((_, t), _) => SOME (String.map Char.toLower t)
+          | _ => NONE
+    end
+
+structure SS = BinarySetFn(struct type ord_key = string val compare = String.compare end)
+
+fun queryTableNames e =
+    let
+        val oldMode = !sqlcacheMode
+        val () = sqlcacheMode := true
+        val rec tablesOfQuery =
+         fn Query1 {From = fitems, ...} => List.foldl SS.union SS.empty (map tableOfFitem fitems)
+          | Union (q1, q2) => SS.union (tablesOfQuery q1, tablesOfQuery q2)
+        and tableOfFitem =
+         fn Table (t, _) => SS.singleton (String.map Char.toLower t)
+          | Nested (q, _) => tablesOfQuery q
+          | Join (_, f1, f2, _) => SS.union (tableOfFitem f1, tableOfFitem f2)
+        val result =
+            case query (chunkifyCjr e) of
+                SOME (q, []) => SOME (SS.listItems (tablesOfQuery q))
+              | _ => NONE
+        val () = sqlcacheMode := oldMode
+    in
+        result
+    end
 
 end
