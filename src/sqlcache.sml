@@ -106,7 +106,7 @@ fun getCache () = !cacheRef
 
 datatype heuristic = Smart | Always | Never | NoPureAll | NoPureOne | NoCombo
 
-val heuristicRef = ref NoPureOne
+val heuristicRef = ref Smart
 fun setHeuristic h = heuristicRef := (case h of
                                           "smart" => Smart
                                         | "always" => Always
