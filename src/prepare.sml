@@ -62,20 +62,20 @@ fun patBinds env p =
         PVar (x, t) => NONE :: env
       | PPrim _ => env
       | PCon (_, _, NONE) => env
-      | PCon (_, _, SOME p) => NONE :: env
+      | PCon (_, _, SOME p) => patBinds env p
       | PRecord xps => foldl (fn ((_, p, _), env) => patBinds env p) env xps
       | PNone _ => env
-      | PSome (_, p) => NONE :: env
+      | PSome (_, p) => patBinds env p
 
 fun patBindsN p =
     case #1 p of
         PVar (x, t) => 1
       | PPrim _ => 0
       | PCon (_, _, NONE) => 0
-      | PCon (_, _, SOME p) => 1
+      | PCon (_, _, SOME p) => patBindsN p
       | PRecord xps => foldl (fn ((_, p, _), acc) => patBindsN p + acc) 0 xps
       | PNone _ => 0
-      | PSome (_, p) => 1
+      | PSome (_, p) => patBindsN p
 
 fun incERels bound i (e as (_, loc)) =
     let
@@ -309,7 +309,8 @@ fun prepExp env (e as (_, loc), st) =
 
       | EQuery {exps, tables, rnum, state, query, body, initial, ...} =>
         let
-            val (body, st) = prepExp env (body, st)
+            val (initial, st) = prepExp env (initial, st)
+            val (body, st) = prepExp (NONE :: NONE :: env) (body, st)
         in
             case prepString env (query, st) of
                 NONE =>
