@@ -106,7 +106,7 @@ fun getCache () = !cacheRef
 
 datatype heuristic = Smart | Always | Never | NoPureAll | NoPureOne | NoCombo
 
-val heuristicRef = ref Smart
+val heuristicRef = ref NoPureOne
 fun setHeuristic h = heuristicRef := (case h of
                                           "smart" => Smart
                                         | "always" => Always
@@ -114,9 +114,6 @@ fun setHeuristic h = heuristicRef := (case h of
                                         | "nopureall" => NoPureAll
                                         | "nopureone" => NoPureOne
                                         | "nocombo" => NoCombo
-                                        (* Aliases *)
-                                        | "default" => Smart
-                                        | "oldDefault" => NoPureOne
                                         | _ => raise Fail "Sqlcache: setHeuristic")
 fun getHeuristic () = !heuristicRef
 
@@ -678,18 +675,14 @@ end = struct
             val args = map (expOfArg o #1) (AM.listItemsi argsMap)
             val invalPaths = List.foldl PS.union PS.empty (map freePaths args)
             val pureArgs = PS.difference (paths, invalPaths)
-            val badToCachePaths =
-                case getHeuristic () of
-                    Smart => PS.difference (pureArgs, freeQueryPaths exp)
-                  | _ => pureArgs
             val shouldCache =
                 case getHeuristic () of
-                    Smart => (case qs of [] => false | _ => PS.isEmpty badToCachePaths)
+                    Smart => (case qs of [] => false | _ => PS.isEmpty (PS.difference (pureArgs, freeQueryPaths exp)))
                   | Always => true
-                  | Never => (case qs of [_] => PS.isEmpty badToCachePaths | _ => false)
+                  | Never => (case qs of [_] => PS.isEmpty pureArgs | _ => false)
                   | NoPureAll => (case qs of [] => false | _ => true)
-                  | NoPureOne => (case qs of [] => false | _ => PS.isEmpty badToCachePaths)
-                  | NoCombo => PS.isEmpty badToCachePaths orelse List.null args
+                  | NoPureOne => (case qs of [] => false | _ => PS.isEmpty pureArgs)
+                  | NoCombo => PS.isEmpty pureArgs orelse List.null args
         in
             (* Put arguments we might invalidate by first. *)
             if shouldCache
