@@ -604,7 +604,7 @@ fun queryTableNames e =
           | Join (_, f1, f2, _) => SS.union (tableOfFitem f1, tableOfFitem f2)
         val result =
             case query (chunkifyCjr e) of
-                SOME (q, []) => SOME (SS.listItems (tablesOfQuery q))
+                SOME (q, []) => if containsImpure q then NONE else SOME (SS.listItems (tablesOfQuery q))
               | _ => NONE
         val () = sqlcacheMode := oldMode
     in
