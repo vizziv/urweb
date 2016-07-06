@@ -106,7 +106,7 @@ fun getCache () = !cacheRef
 
 datatype heuristic = Smart | Always | Never | NoPureAll | NoPureOne | NoCombo
 
-val heuristicRef = ref NoPureOne
+val heuristicRef = ref Smart
 fun setHeuristic h = heuristicRef := (case h of
                                           "smart" => Smart
                                         | "always" => Always
@@ -114,6 +114,9 @@ fun setHeuristic h = heuristicRef := (case h of
                                         | "nopureall" => NoPureAll
                                         | "nopureone" => NoPureOne
                                         | "nocombo" => NoCombo
+                                        (* Aliases *)
+                                        | "default" => Smart
+                                        | "oldDefault" => NoPureOne
                                         | _ => raise Fail "Sqlcache: setHeuristic")
 fun getHeuristic () = !heuristicRef
 
@@ -127,6 +130,10 @@ val doBind =
  fn (env, MonoUtil.Exp.RelE (x, t)) => MonoEnv.pushERel env x t NONE
   | (env, MonoUtil.Exp.NamedE (x, n, t, eo, s)) => MonoEnv.pushENamed env x n t eo s
   | (env, MonoUtil.Exp.Datatype (x, n, cs)) => MonoEnv.pushDatatype env x n cs
+
+val incBind =
+ fn (bound, MonoUtil.Exp.RelE _) => bound + 1
+  | (bound, _) => bound
 
 val dummyLoc = ErrorMsg.dummySpan
 
@@ -391,8 +398,7 @@ val freeVars =
                                            then vars
                                            else IS.add (vars, n - bound)
                 | (_, _, vars) => vars,
-         bind = fn (bound, MonoUtil.Exp.RelE _) => bound + 1
-                 | (bound, _) => bound}
+         bind = incBind}
         0
         IS.empty
 
@@ -470,6 +476,19 @@ fun freePaths' bound exp =
       | ESpawn e => freePaths' bound e
 
 fun freePaths exp = freePaths' 0 exp PS.empty
+
+fun freeQueryPaths exp =
+    MonoUtil.Exp.foldB
+        {typ = #2,
+         exp = fn (bound, e', fqps) =>
+                  fqps o (case e' of
+                              EQuery _ => freePaths' bound (e', dummyLoc)
+                            | _ => id),
+         bind = incBind}
+        0
+        id
+        exp
+        PS.empty
 
 datatype unbind = Known of exp | Unknowns of int
 
@@ -655,43 +674,22 @@ end = struct
     fun orderArgs (qs : t, exp) =
         let
             val paths = freePaths exp
-            fun erel n = (ERel n, dummyLoc)
             val argsMap = sqlArgsMap qs
             val args = map (expOfArg o #1) (AM.listItemsi argsMap)
             val invalPaths = List.foldl PS.union PS.empty (map freePaths args)
-            (* TODO: make sure these variables are okay to remove from the argument list. *)
             val pureArgs = PS.difference (paths, invalPaths)
+            val badToCachePaths =
+                case getHeuristic () of
+                    Smart => PS.difference (pureArgs, freeQueryPaths exp)
+                  | _ => pureArgs
             val shouldCache =
                 case getHeuristic () of
-                    Smart =>
-                    (case (qs, PS.numItems pureArgs) of
-                         ((q::qs), 0) =>
-                         let
-                             val args = sqlArgsSet q
-                             val argss = map sqlArgsSet qs
-                             fun test (args, acc) =
-                                 acc
-                                 <\obind\>
-                                  (fn args' =>
-                                      let
-                                          val both = AS.union (args, args')
-                                      in
-                                          (AS.numItems args = AS.numItems both
-                                           orelse AS.numItems args' = AS.numItems both)
-                                          <\oguard\>
-                                           (fn _ => SOME both)
-                                      end)
-                         in
-                             case List.foldl test (SOME args) argss of
-                                 NONE => false
-                               | SOME _ => true
-                         end
-                       | _ => false)
+                    Smart => (case qs of [] => false | _ => PS.isEmpty badToCachePaths)
                   | Always => true
-                  | Never => (case qs of [_] => PS.numItems pureArgs = 0 | _ => false)
+                  | Never => (case qs of [_] => PS.isEmpty badToCachePaths | _ => false)
                   | NoPureAll => (case qs of [] => false | _ => true)
-                  | NoPureOne => (case qs of [] => false | _ => PS.numItems pureArgs = 0)
-                  | NoCombo => PS.numItems pureArgs = 0 orelse List.null args
+                  | NoPureOne => (case qs of [] => false | _ => PS.isEmpty badToCachePaths)
+                  | NoCombo => PS.isEmpty badToCachePaths orelse List.null args
         in
             (* Put arguments we might invalidate by first. *)
             if shouldCache
