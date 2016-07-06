@@ -1006,7 +1006,10 @@ fun dml {loc, mode, tableName} =
     box [string "PGconn *conn = uw_get_db(ctx);",
          newline,
 
-         string ("uw_Dyncache_flush(\"" ^ tableName ^ "\");"),
+         if Settings.getDyncache () then
+             string ("uw_Dyncache_flush(\"" ^ tableName ^ "\");")
+         else
+             string "",
          newline,
 
          string "PGresult *res;",
@@ -1023,7 +1026,10 @@ fun dmlPrepared {loc, id, dml, inputs, mode, tableName} =
     box [string "PGconn *conn = uw_get_db(ctx);",
          newline,
 
-         string ("uw_Dyncache_flush(\"" ^ tableName ^ "\");"),
+         if Settings.getDyncache () then
+             string ("uw_Dyncache_flush(\"" ^ tableName ^ "\");")
+         else
+             string "",
          newline,
 
          makeParams inputs,
