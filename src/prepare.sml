@@ -176,7 +176,7 @@ fun prepString env (e, st) =
 fun prepExp env (e as (_, loc), st) =
     case #1 e of
         EPrim _ => (e, st)
-      | ERel _ => (e, st)
+      | ERel _ => (Print.preface ("FIXME: " ^ Int.toString (length env) ^ ", ", CjrPrint.p_exp CjrEnv.empty e); (e, st))
       | ENamed _ => (e, st)
       | ECon (_, _, NONE) => (e, st)
       | ECon (dk, pc, SOME e) =>
@@ -380,7 +380,7 @@ fun prepDecl (d as (_, loc), st) =
         end
       | DFun (x, n, xts, t, e) =>
         let
-            val (e, st) = prepExp [] (e, st)
+            val (e, st) = prepExp (map (fn _ => NONE) xts) (e, st)
         in
             ((DFun (x, n, xts, t, e), loc), st)
         end
@@ -388,7 +388,7 @@ fun prepDecl (d as (_, loc), st) =
         let
             val (fs, st) = ListUtil.foldlMap (fn ((x, n, xts, t, e), st) =>
                                                   let
-                                                      val (e, st) = prepExp [] (e, st)
+                                                      val (e, st) = prepExp (map (fn _ => NONE) xts) (e, st)
                                                   in
                                                       ((x, n, xts, t, e), st)
                                                   end) st fs
