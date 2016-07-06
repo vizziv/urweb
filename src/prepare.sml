@@ -176,7 +176,7 @@ fun prepString env (e, st) =
 fun prepExp env (e as (_, loc), st) =
     case #1 e of
         EPrim _ => (e, st)
-      | ERel _ => (Print.preface ("FIXME: " ^ Int.toString (length env) ^ ", ", CjrPrint.p_exp CjrEnv.empty e); (e, st))
+      | ERel _ => (e, st)
       | ENamed _ => (e, st)
       | ECon (_, _, NONE) => (e, st)
       | ECon (dk, pc, SOME e) =>
