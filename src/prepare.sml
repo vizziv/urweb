@@ -124,7 +124,7 @@ fun prepString env (e, st) =
                     SOME (s :: ss, n, eAll)
 
                   (* Environment lookup. *)
-                  | ERel i => Option.mapPartial (prepString' o (fn e => (Print.preface ("FIXME>", CjrPrint.p_exp CjrEnv.empty e); (e, ss, n)))) (envLookup env i)
+                  | ERel i => Option.mapPartial (prepString' o (fn e => (e, ss, n))) (envLookup env i)
 
                   | EFfiApp ("Basis", "strcat", [(e1, t1), (e2, t2)]) =>
                     (case prepString' (e1, ss, n) of
