@@ -4769,6 +4769,23 @@ static double uw_Sqlcache_ratioThreshold = 0.66015625; // 169/256
 static double uw_Sqlcache_ratioActivateReset = 1.0;
 static double uw_Sqlcache_ratioDeactivateReset = 0.5;
 
+static void uw_Sqlcache_autotune(uw_Sqlcache_Cache *cache, uw_Basis_bool isDeactivated) {
+  pthread_rwlock_wrlock(&cache->lockIn);
+  cache->isDeactivated = isDeactivated;
+  cache->inLimbo = 0;
+  time_t timeNow = uw_Sqlcache_getTimeNow(cache);
+  cache->timeInvalid = timeNow;
+  cache->timeRefreshed = timeNow;
+  if (isDeactivated) {
+    cache->hitRatio = uw_Sqlcache_ratioDeactivateReset;
+    cache->clockDeactivated = time(NULL);
+  } else {
+    cache->hitRatio = uw_Sqlcache_ratioActivateReset;
+    cache->clockActivated = time(NULL);
+  }
+  pthread_rwlock_unlock(&cache->lockIn);
+}
+
 static void uw_Sqlcache_pushAutotune(uw_context ctx,
                                      uw_Sqlcache_Cache *cache,
                                      uw_Basis_bool isDeactivated) {
@@ -4790,7 +4807,8 @@ static void uw_Sqlcache_recordFlush(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!cache->inLimbo
       && !cache->isDeactivated
       && cache->hitRatio < uw_Sqlcache_ratioThreshold) {
-    uw_Sqlcache_pushAutotune(ctx, cache, uw_Basis_True);
+    // If we're flushing, we have the transaction lock, so just deactivated it now.
+    uw_Sqlcache_autotune(cache, uw_Basis_True);
     printf("AUTOTUNE: cache deactivating\n");
   }
 }
@@ -4818,9 +4836,9 @@ static int uw_Sqlcache_isDeactivatedRead(uw_Sqlcache_Cache *cache) {
 }
 
 static int uw_Sqlcache_isDeactivatedWrite(uw_Sqlcache_Cache *cache) {
-  // If the cache was just deactivated, keep flushing for a bit so that
-  // in-flight reads don't get stale values.
-  return cache->isDeactivated && cache->clockDeactivated <= time(NULL) - 2;
+  // The cache is always deactivated while holding the transaction lock, so no
+  // time shenanigans necessary.
+  return cache->isDeactivated;
 }
 
 static int uw_Sqlcache_doDeactivatedSample() {
@@ -4987,22 +5005,7 @@ static void uw_Sqlcache_free(void *data, int dontCare) {
   // doesn't commit.
   uw_Sqlcache_Autotune *autotune = ctx->cacheAutotune;
   while (autotune) {
-    uw_Sqlcache_Cache *cache = autotune->cache;
-    uw_Basis_bool isDeactivated = autotune->isDeactivated;
-    cache->isDeactivated = isDeactivated;
-    pthread_rwlock_wrlock(&cache->lockIn);
-    cache->inLimbo = 0;
-    time_t timeNow = uw_Sqlcache_getTimeNow(cache);
-    cache->timeInvalid = timeNow;
-    cache->timeRefreshed = timeNow;
-    if (isDeactivated) {
-      cache->hitRatio = uw_Sqlcache_ratioDeactivateReset;
-      cache->clockDeactivated = time(NULL);
-    } else {
-      cache->hitRatio = uw_Sqlcache_ratioActivateReset;
-      cache->clockActivated = time(NULL);
-    }
-    pthread_rwlock_unlock(&cache->lockIn);
+    uw_Sqlcache_autotune(autotune->cache, autotune->isDeactivated);
     uw_Sqlcache_Autotune *nextAutotune = autotune->next;
     free(autotune);
     autotune = nextAutotune;
@@ -5030,6 +5033,10 @@ static void uw_Sqlcache_pushUnlock(uw_context ctx, pthread_rwlock_t *lock) {
 void uw_Sqlcache_rlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!uw_Sqlcache_isDeactivatedRead(cache)) {
     pthread_rwlock_rdlock(&cache->lockOut);
+    if (uw_Sqlcache_isDeactivatedRead(cache)) {
+      pthread_rwlock_unlock(&cache->lockOut);
+      return;
+    }
     uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
   }
 }
@@ -5037,6 +5044,10 @@ void uw_Sqlcache_rlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
 void uw_Sqlcache_wlock(uw_context ctx, uw_Sqlcache_Cache *cache) {
   if (!uw_Sqlcache_isDeactivatedWrite(cache)) {
     pthread_rwlock_wrlock(&cache->lockOut);
+    if (uw_Sqlcache_isDeactivatedWrite(cache)) {
+      pthread_rwlock_unlock(&cache->lockOut);
+      return;
+    }
     uw_Sqlcache_pushUnlock(ctx, &cache->lockOut);
   }
 }
