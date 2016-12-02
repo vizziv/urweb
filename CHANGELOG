@@ -1,4 +1,26 @@
 ========
+20161022
+========
+
+- Add Json module to standard library
+- Make HTML5 the default and add 'xhtml' .urp directive
+- Remove 'Value' attributes for AJAX-y UI widgets, because they should use 'Source' instead
+- Change compiler to support reproducible builds, via replacement of timestamp
+  calculation with different methods or use of content hashes
+- IPv6 support in HTTP-server binaries, via '-A' command-line option
+- New Top function: mapUX_rev
+- Bug fixes and documentation improvements
+
+========
+20160805
+========
+
+- Compatibility fixes for C compilers and OpenSSL
+- Starting to change SQL functions to return results in most natural order
+  - Step 1: queryL
+- Bug fixes
+
+========
 20160621
 ========
 

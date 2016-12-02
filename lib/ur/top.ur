@@ -179,6 +179,13 @@ fun mapUX [tf :: Type] [ctx :: {Unit}]
           <xml>{f [nm] [rest] r}{acc}</xml>)
       <xml/>
 
+fun mapUX_rev [tf :: Type] [ctx :: {Unit}]
+          (f : nm :: Name -> rest :: {Unit} -> [[nm] ~ rest] => tf -> xml ctx [] []) =
+    @@foldR [fn _ => tf] [fn _ => xml ctx [] []]
+      (fn [nm :: Name] [u :: Unit] [rest :: {Unit}] [[nm] ~ rest] r acc =>
+          <xml>{acc}{f [nm] [rest] r}</xml>)
+      <xml/>
+
 fun mapX [K] [tf :: K -> Type] [ctx :: {Unit}]
             (f : nm :: Name -> t :: K -> rest :: {K}
                  -> [[nm] ~ rest] =>
@@ -225,15 +232,23 @@ fun query1' [t ::: Name] [fs ::: {Type}] [state ::: Type] (q : sql_query [] [] [
             (f : $fs -> state -> state) (i : state) =
     query q (fn r s => return (f r.t s)) i
 
+val rev = fn [a] =>
+             let
+                 fun rev' acc (ls : list a) =
+                     case ls of
+                         [] => acc
+                       | x :: ls => rev' (x :: acc) ls
+             in
+                 rev' []
+             end
+
 fun queryL [tables] [exps] [tables ~ exps] (q : sql_query [] [] tables exps) =
-    query q
-    (fn r ls => return (r :: ls))
-    []
+    ls <- query q (fn r ls => return (r :: ls)) [];
+    return (rev ls)
 
 fun queryL1 [t ::: Name] [fs ::: {Type}] (q : sql_query [] [] [t = fs] []) =
-    query q
-    (fn r ls => return (r.t :: ls))
-    []
+    ls <- query q (fn r ls => return (r.t :: ls)) [];
+    return (rev ls)
 
 fun queryI [tables ::: {{Type}}] [exps ::: {Type}]
            [tables ~ exps] (q : sql_query [] [] tables exps)

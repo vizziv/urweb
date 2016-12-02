@@ -309,4 +309,5 @@ signature SETTINGS = sig
 
     val addJsFile : string (* filename *) -> unit
     val listJsFiles : unit -> {Filename : string, Content : string} list
+
 end

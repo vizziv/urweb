@@ -281,7 +281,7 @@ See doc for the variable `urweb-mode-info'."
   "Face name to use for SQL keywords.")
 
 (defface font-lock-cvariable-face
-  '((t (:foreground "dark blue")))
+  '((t (:inherit font-lock-type-face)))
   "Font Lock mode face used to highlight capitalized identifiers."
   :group 'font-lock-highlighting-faces)
 (defvar font-lock-cvariable-face 'font-lock-cvariable-face
@@ -395,7 +395,6 @@ This mode runs `urweb-mode-hook' just before exiting.
   ;; Treat paragraph-separators in comments as paragraph-separators.
   (set (make-local-variable 'paragraph-separate)
        (concat "\\([ \t]*\\*)?\\)?\\(" paragraph-separate "\\)"))
-  (set (make-local-variable 'require-final-newline) t)
   ;; forward-sexp-function is an experimental variable in my hacked Emacs.
   (set (make-local-variable 'forward-sexp-function) 'urweb-user-forward-sexp)
   ;; For XEmacs
