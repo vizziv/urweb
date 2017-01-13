@@ -845,20 +845,21 @@ structure FlattenQuery = struct
                    SM.empty
 
     fun unionSubst ((aliasToSubst1, realToAliases1), (aliasToSubst2, realToAliases2)) =
+        (* We shouldn't have duplicate aliases. *)
         (SM.unionWith (fn _ => raise Fail "Sqlcache: unionSubst") (aliasToSubst1, aliasToSubst2),
          SM.unionWith op@ (realToAliases1, realToAliases2))
 
     fun sqlAnd (se1, se2) = Sql.Binop (Sql.RLop Sql.And, se1, se2)
     fun sqlOr (se1, se2) = Sql.Binop (Sql.RLop Sql.Or, se1, se2)
 
-    val rec flattenFitem : Sql.fitem -> (Sql.sqexp * substitution) list =
-     fn Sql.Table (real, alias) => [(Sql.SqTrue, newRenameSubst (alias, real))]
+    val rec flattenFitem : Sql.fitem -> ((sitem' list -> Sql.sqexp) * substitution) list =
+     fn Sql.Table (real, alias) => [(fn _ => Sql.SqTrue, newRenameSubst (alias, real))]
       | Sql.Nested (q, s) =>
         let
             val qfs = flattenQuery q
         in
             map (fn (qf, subst) =>
-                    (#Where qf, addInlineToSubst (subst, s, sitemsToSubst (#Select qf))))
+                    (fn _ => #Where qf, addInlineToSubst (subst, s, sitemsToSubst (#Select qf))))
                 qfs
         end
       | Sql.Join (jt, fi1, fi2, se) =>
@@ -866,15 +867,19 @@ structure FlattenQuery = struct
                       map (fn (wher2, subst2) =>
                               let
                                   val subst = unionSubst (subst1, subst2)
-                                  val both = sqlAnd (sqlAnd (wher1, wher2), applySubst subst se)
-                                  val noLeft = Sql.SqFalse (* FIXME *)
-                                  val noRight = Sql.SqFalse (* FIXME *)
+                                  fun both sitems =
+                                    sqlAnd (applySubst subst se,
+                                            sqlAnd (wher1 sitems, wher2 sitems))
+                                  fun noLeft sitems = wher2 sitems
+                                  fun noRight sitems = wher1 sitems
                               in
-                                  (case jt of
-                                       Sql.Inner => both
-                                     | Sql.Left => sqlOr (both, noRight)
-                                     | Sql.Right => sqlOr (both, noLeft)
-                                     | Sql.Full => sqlOr (both, sqlOr (noLeft, noRight)),
+                                  (fn sitems =>
+                                      case jt of
+                                          Sql.Inner => both sitems
+                                        | Sql.Left => sqlOr (both sitems, noRight sitems)
+                                        | Sql.Right => sqlOr (both sitems, noLeft sitems)
+                                        | Sql.Full => sqlOr (both sitems,
+                                                             sqlOr (noLeft sitems, noRight sitems)),
                                    subst)
                               end)
                           (flattenFitem fi2))
@@ -890,7 +895,11 @@ structure FlattenQuery = struct
                         val subst = List.foldl (fn ((_, subst), acc) => unionSubst (acc, subst))
                                                emptySubst
                                                fifs
-                        val wher = List.foldr (fn ((wher, _), acc) => sqlAnd (wher, acc))
+                        val sitems =
+                            map (fn Sql.SqExp (se, s) => Named (applySubst subst se, s)
+                                  | Sql.SqField tf => Unnamed (applySubst subst (Sql.Field tf)))
+                                (#Select q)
+                        val wher = List.foldr (fn ((wher, _), acc) => sqlAnd (wher sitems, acc))
                                               (case #Where q of
                                                    NONE => Sql.SqTrue
                                                  | SOME wher => wher)
@@ -899,16 +908,13 @@ structure FlattenQuery = struct
                         (* ASK: do we actually need to pass the substitution through here? *)
                         (* We use the substitution later, but it's not clear we
                            need any of its currently present fields again. *)
-                        ({Select = map (fn Sql.SqExp (se, s) => Named (applySubst subst se, s)
-                                         | Sql.SqField tf =>
-                                           Unnamed (applySubst subst (Sql.Field tf)))
-                                       (#Select q),
+                        ({Select = sitems,
                           Where = applySubst subst wher},
                          subst)
                     end)
                 fifss
         end
-      | Sql.Union (q1, q2) => (flattenQuery q1) @ (flattenQuery q2)
+      | Sql.Union (q1, q2) => flattenQuery q1 @ flattenQuery q2
 
 end
 
