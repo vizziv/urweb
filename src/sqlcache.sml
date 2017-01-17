@@ -339,7 +339,8 @@ fun removeRedundant madeRedundantBy zs =
     end
 
 datatype atomExp =
-         QueryArg of int
+         Null
+       | QueryArg of int
        | DmlRel of int
        | Prim of Prim.t
        | Field of string * string
@@ -349,15 +350,18 @@ structure AtomExpKey : ORD_KEY = struct
     type ord_key = atomExp
 
     val compare =
-     fn (QueryArg n1, QueryArg n2) => Int.compare (n1, n2)
-      | (QueryArg _, _) => LESS
-      | (_, QueryArg _) => GREATER
-      | (DmlRel n1, DmlRel n2) => Int.compare (n1, n2)
-      | (DmlRel _, _) => LESS
-      | (_, DmlRel _) => GREATER
+     fn (Null, Null) => EQUAL
+      | (Null, _) => LESS
+      | (_, Null) => GREATER
       | (Prim p1, Prim p2) => Prim.compare (p1, p2)
       | (Prim _, _) => LESS
       | (_, Prim _) => GREATER
+      | (DmlRel n1, DmlRel n2) => Int.compare (n1, n2)
+      | (DmlRel _, _) => LESS
+      | (_, DmlRel _) => GREATER
+      | (QueryArg n1, QueryArg n2) => Int.compare (n1, n2)
+      | (QueryArg _, _) => LESS
+      | (_, QueryArg _) => GREATER
       | (Field (t1, f1), Field (t2, f2)) =>
         case String.compare (t1, t2) of
             EQUAL => String.compare (f1, f2)
@@ -791,6 +795,14 @@ fun mapSqexpFields f =
   | Sql.SqFunc (s, e) => Sql.SqFunc (s, mapSqexpFields f e)
   | e => e
 
+fun existsSqexpFields f =
+ fn Sql.Field (t, v) => f ((t, v))
+  | Sql.SqNot e => existsSqexpFields f e
+  | Sql.Binop (r, e1, e2) => existsSqexpFields f e2 orelse existsSqexpFields f e1
+  | Sql.SqKnown e => existsSqexpFields f e
+  | Sql.SqFunc (s, e) => existsSqexpFields f e
+  | e => false
+
 fun renameTables tablePairs =
     let
         fun rename table =
@@ -837,6 +849,10 @@ structure FlattenQuery = struct
 
     datatype sitem' = Named of Sql.sqexp * string | Unnamed of Sql.sqexp
 
+    val sitemToSqexp =
+     fn Named (se, _) => se
+      | Unnamed se => se
+
     type queryFlat = {Select : sitem' list, Where : Sql.sqexp}
 
     val sitemsToSubst =
@@ -844,13 +860,36 @@ structure FlattenQuery = struct
                      | (Unnamed _, _) => raise Fail "Sqlcache: sitemsToSubst")
                    SM.empty
 
-    fun unionSubst ((aliasToSubst1, realToAliases1), (aliasToSubst2, realToAliases2)) =
+    fun unionSubstComma ((aliasToSubst1, realToAliases1), (aliasToSubst2, realToAliases2)) =
         (* We shouldn't have duplicate aliases. *)
-        (SM.unionWith (fn _ => raise Fail "Sqlcache: unionSubst") (aliasToSubst1, aliasToSubst2),
+        (SM.unionWith (fn _ => raise Fail "Sqlcache: unionSubstComma")
+                      (aliasToSubst1, aliasToSubst2),
          SM.unionWith op@ (realToAliases1, realToAliases2))
+
+    fun unionSubstJoin ((aliasToSubst1, realToAliases1), (aliasToSubst2, realToAliases2)) =
+        (* We don't yet support self joins. *)
+        (SM.unionWith (fn _ => raise Fail "Sqlcache: unionSubstJoin (a)")
+                      (aliasToSubst1, aliasToSubst2),
+         SM.unionWith op@
+                      (realToAliases1, realToAliases2))
 
     fun sqlAnd (se1, se2) = Sql.Binop (Sql.RLop Sql.And, se1, se2)
     fun sqlOr (se1, se2) = Sql.Binop (Sql.RLop Sql.Or, se1, se2)
+    fun sqlEq (se1, se2) = Sql.Binop (Sql.RCmp Sql.Eq, se1, se2)
+
+    fun sitemsNull ((sitems, (_, realToAliases)) : sitem' list * substitution) =
+        foldl (fn (se, acc) => sqlAnd (acc, (sqlEq (se, Sql.Null))))
+              Sql.SqTrue
+              (List.mapPartial
+                   (fn sitem =>
+                       let
+                           val se = sitemToSqexp sitem
+                       in
+                           existsSqexpFields (fn (t, f) => SM.find (realToAliases, t) <> NONE) se
+                           <\oguard\>
+                            (fn _ => SOME se)
+                       end)
+                   sitems)
 
     val rec flattenFitem : Sql.fitem -> ((sitem' list -> Sql.sqexp) * substitution) list =
      fn Sql.Table (real, alias) => [(fn _ => Sql.SqTrue, newRenameSubst (alias, real))]
@@ -866,20 +905,25 @@ structure FlattenQuery = struct
         concatMap (fn (wher1, subst1) =>
                       map (fn (wher2, subst2) =>
                               let
-                                  val subst = unionSubst (subst1, subst2)
+                                  val subst = unionSubstJoin (subst1, subst2)
                                   fun both sitems =
                                     sqlAnd (applySubst subst se,
                                             sqlAnd (wher1 sitems, wher2 sitems))
-                                  fun noLeft sitems = wher2 sitems
-                                  fun noRight sitems = wher1 sitems
+                                  fun leftOnly sitems =
+                                    sqlAnd (wher1 sitems,
+                                            sitemsNull (sitems, subst2))
+                                  fun rightOnly sitems =
+                                    sqlAnd (sitemsNull (sitems, subst1),
+                                            wher2 sitems)
                               in
                                   (fn sitems =>
                                       case jt of
                                           Sql.Inner => both sitems
-                                        | Sql.Left => sqlOr (both sitems, noRight sitems)
-                                        | Sql.Right => sqlOr (both sitems, noLeft sitems)
-                                        | Sql.Full => sqlOr (both sitems,
-                                                             sqlOr (noLeft sitems, noRight sitems)),
+                                        | Sql.Left => sqlOr (both sitems, leftOnly sitems)
+                                        | Sql.Right => sqlOr (both sitems, rightOnly sitems)
+                                        | Sql.Full =>
+                                          sqlOr (both sitems,
+                                                 sqlOr (rightOnly sitems, leftOnly sitems)),
                                    subst)
                               end)
                           (flattenFitem fi2))
@@ -892,7 +936,7 @@ structure FlattenQuery = struct
         in
             map (fn fifs =>
                     let
-                        val subst = List.foldl (fn ((_, subst), acc) => unionSubst (acc, subst))
+                        val subst = List.foldl (fn ((_, subst), acc) => unionSubstComma (acc, subst))
                                                emptySubst
                                                fifs
                         val sitems =
@@ -1006,24 +1050,33 @@ structure ConflictMaps = struct
         end
 
     fun addToEqs (eqs, n, e) =
-        case IM.find (eqs, n) of
-            (* Comparing to a constant is probably better than comparing to a
-               variable? Checking that existing constants match a new ones is
-               handled by [accumulateEqs]. *)
-            SOME (Prim _) => eqs
-          | _ => IM.insert (eqs, n, e)
+        let
+            fun addIt () =
+                case IM.find (eqs, n) of
+                    NONE => IM.insert (eqs, n, e)
+                  | SOME e' =>
+                    case AtomExpKey.compare (e, e') of
+                        GREATER => IM.insert (eqs, n, e)
+                      | _ => eqs
+        in
+            case e of
+                Null => addIt ()
+              | Prim _ => addIt ()
+              | DmlRel _ => addIt ()
+              | _ => eqs
+        end
 
     val accumulateEqs =
      (* [NONE] means we have a contradiction. *)
      fn (_, NONE) => NONE
+      | ((Null, Prim _), eqso) => NONE
+      | ((Prim _, Null), eqso) => NONE
       | ((Prim p1, Prim p2), eqso) =>
         (case Prim.compare (p1, p2) of
              EQUAL => eqso
            | _ => NONE)
-      | ((QueryArg n, Prim p), SOME eqs) => SOME (addToEqs (eqs, n, Prim p))
-      | ((QueryArg n, DmlRel r), SOME eqs) => SOME (addToEqs (eqs, n, DmlRel r))
-      | ((Prim p, QueryArg n), SOME eqs) => SOME (addToEqs (eqs, n, Prim p))
-      | ((DmlRel r, QueryArg n), SOME eqs) => SOME (addToEqs (eqs, n, DmlRel r))
+      | ((QueryArg n, ae), SOME eqs) => SOME (addToEqs (eqs, n, ae))
+      | ((ae, QueryArg n), SOME eqs) => SOME (addToEqs (eqs, n, ae))
       (* TODO: deal with equalities between [DmlRel]s and [Prim]s.
          This would involve guarding the invalidation with a check for the
          relevant comparisons. *)
@@ -1041,6 +1094,7 @@ structure ConflictMaps = struct
               | Sql.Field tf => SOME (Field tf)
               | Sql.Inj (EPrim p, _) => SOME (Prim p)
               | Sql.Inj (ERel n, _) => SOME (rel n)
+              | Sql.Null => SOME Null
               (* We can't deal with anything else, e.g., CURRENT_TIMESTAMP
                  becomes Sql.Unmodeled, which becomes NONE here. *)
               | _ => NONE
@@ -1553,14 +1607,13 @@ structure Invalidations = struct
 
     val optionAtomExpToExp =
      fn NONE => (ENone stringTyp, loc)
-      | SOME e => (ESome (stringTyp,
-                          (case e of
-                               DmlRel n => ERel n
-                             | Prim p => EPrim p
-                             (* TODO: make new type containing only these two. *)
-                             | _ => raise Fail "Sqlcache: Invalidations.optionAtomExpToExp",
-                           loc)),
-                   loc)
+      | SOME e => case e of
+                      Prim p => (ESome (stringTyp, (EPrim p, loc)), loc)
+                    | DmlRel n => (ESome (stringTyp, (ERel n, loc)), loc)
+                    (* FIXME: actually invalidate at the right key, probably below. *)
+                    (* | Null => (ESome (stringTyp, stringExp "NULL"), loc) *)
+                    | Null => raise Fail "Sqlcache: Invalidations.optionAtomExpToExp (Null)"
+                    | _ => raise Fail "Sqlcache: Invalidations.optionAtomExpToExp"
 
     fun eqsToInvalidation numArgs eqs =
         List.tabulate (numArgs, (fn n => IM.find (eqs, n)))
