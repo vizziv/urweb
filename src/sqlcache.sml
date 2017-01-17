@@ -823,20 +823,21 @@ fun renameTables tablePairs =
 
 structure FlattenQuery = struct
 
-    type substitution1 = Sql.sqexp SM.map
+    type substitution1 = Sql.sqexp SM.map option
 
-    (* First map: expression name ("alias") -> field substitutions.
+    (* First map: alias -> NONE (if renamed table) or SOME fieldSubstitution (if nested query).
        Second map: real table -> alias table and fields used. *)
     type substitution = substitution1 SM.map * (string * string list) list SM.map
 
-    fun applySubst (aliasToSubst, _) =
+    fun applySubst x (aliasToSubst, _) =
         let
             fun substitute (table, field) =
                 case SM.find (aliasToSubst, table) of
                     NONE => Sql.Field (table, field)
-                  | SOME fieldToSqexp =>
+                  | SOME NONE => Sql.Field (table, field)
+                  | SOME (SOME fieldToSqexp) =>
                     case SM.find (fieldToSqexp, field) of
-                        NONE => raise Fail "Sqlcache: applySubst"
+                        NONE => raise Fail ("Sqlcache: applySubst (" ^ x ^ ", " ^ table ^ ", " ^ field ^ ")")
                       | SOME se => se
         in
             mapSqexpFields substitute
@@ -847,7 +848,7 @@ structure FlattenQuery = struct
     fun addInlineToSubst (subst as (aliasToSubst, realToAliases), table, fieldToSqexp) =
         (SM.insert (aliasToSubst,
                     table,
-                    SM.map (applySubst subst) fieldToSqexp),
+                    SOME (SM.map (applySubst table subst) fieldToSqexp)),
          realToAliases)
 
     datatype sitem' = Named of Sql.sqexp * string | Unnamed of Sql.sqexp
@@ -862,7 +863,7 @@ structure FlattenQuery = struct
                 concatMap (foldlSqexpFields (fn ((t, f), acc) => f :: acc) [] o sitemToSqexp)
                           sitems
         in
-            (SM.singleton (alias, SM.empty), SM.singleton (real, [(alias, fields)]))
+            (SM.singleton (alias, NONE), SM.singleton (real, [(alias, fields)]))
         end
 
     type queryFlat = {Select : sitem' list, Where : Sql.sqexp}
@@ -895,12 +896,11 @@ structure FlattenQuery = struct
                        end)
                    sitems)
 
-    val rec flattenFitem : sitem' list -> Sql.fitem -> (Sql.sqexp * substitution) list =
-     fn sitems =>
+    fun flattenFitem (sitems : sitem' list) : Sql.fitem -> (Sql.sqexp * substitution) list =
      fn Sql.Table (real, alias) => [(Sql.SqTrue, newRenameSubst (alias, real, sitems))]
       | Sql.Nested (q, s) =>
         let
-            val qfs = flattenQuery q
+            val qfs = flattenQuery (SOME s) q
         in
             map (fn (qf, subst) =>
                     (#Where qf, addInlineToSubst (subst, s, sitemsToSubst (#Select qf))))
@@ -910,10 +910,8 @@ structure FlattenQuery = struct
         concatMap (fn (wher1, subst1) =>
                       map (fn (wher2, subst2) =>
                               let
-                                  val subst = unionSubst (subst1, subst2)
                                   val both =
-                                    sqlAnd (applySubst subst se,
-                                            sqlAnd (wher1, wher2))
+                                    sqlAnd (se, sqlAnd (wher1, wher2))
                                   fun leftOnly () =
                                     sqlAnd (wher1, sitemsNull (sitems, subst2))
                                   fun rightOnly () =
@@ -925,12 +923,12 @@ structure FlattenQuery = struct
                                      | Sql.Right => sqlOr (both, rightOnly ())
                                      | Sql.Full =>
                                        sqlOr (both, sqlOr (rightOnly (), leftOnly ())),
-                                   subst)
+                                   unionSubst (subst1, subst2))
                               end)
                           (flattenFitem sitems fi2))
                   (flattenFitem sitems fi1)
 
-    and flattenQuery : Sql.query -> (queryFlat * substitution) list =
+    and flattenQuery (tableq : string option) : Sql.query -> (queryFlat * substitution) list =
      fn Sql.Query1 q =>
         let
             val sitems = map (fn Sql.SqExp (se, s) => Named (se, s)
@@ -940,33 +938,45 @@ structure FlattenQuery = struct
         in
             map (fn fifs =>
                     let
-                        val subst = List.foldl (fn ((_, subst), acc) => unionSubst (acc, subst))
-                                               emptySubst
-                                               fifs
-                        val wher = List.foldr (fn ((wher, _), acc) => sqlAnd (wher, acc))
+                        val substAlmost = List.foldl unionSubst emptySubst (map #2 fifs)
+                        val subst =
+                            case tableq of
+                                NONE => substAlmost
+                              | SOME table =>
+                                addInlineToSubst (substAlmost, table, sitemsToSubst sitems)
+                        val wher = List.foldr sqlAnd
                                               (case #Where q of
                                                    NONE => Sql.SqTrue
                                                  | SOME wher => wher)
-                                              fifs
+                                              (map #1 fifs)
                     in
                         (* ASK: do we actually need to pass the substitution through here? *)
                         (* We use the substitution later, but it's not clear we
                            need any of its currently present fields again. *)
                         ({Select = sitems,
-                          Where = applySubst subst wher},
+                          Where = applySubst "b" subst wher},
                          subst)
                     end)
                 fifss
         end
-      | Sql.Union (q1, q2) => flattenQuery q1 @ flattenQuery q2
+      | Sql.Union (q1, q2) => flattenQuery tableq q1 @ flattenQuery tableq q2
 
 end
 
-val flattenQuery = map (fn (x, (_, y)) => (x, y)) o FlattenQuery.flattenQuery
+val flattenQuery = map (fn (x, (_, y)) => (x, y)) o FlattenQuery.flattenQuery NONE
 
 fun queryFlatToFormula marker ({Select = sitems, Where = wher}, subst) =
     let
-        val fWhere = sqexpToFormula wher
+        fun tableRenamings (real, afss) =
+          Combo (Disj,
+                 map (fn (alias, fields) =>
+                         Combo (Conj,
+                                map (fn f =>
+                                        Atom (Sql.Eq, Sql.Field (real, f), Sql.Field (alias, f)))
+                                    fields))
+                           afss)
+        val allRenamings = map tableRenamings (SM.listItemsi subst)
+        val fWhere = Combo (Conj, sqexpToFormula wher :: allRenamings)
     in
         case marker of
              NONE => fWhere
