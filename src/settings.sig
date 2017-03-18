@@ -310,4 +310,6 @@ signature SETTINGS = sig
     val addJsFile : string (* filename *) -> unit
     val listJsFiles : unit -> {Filename : string, Content : string} list
 
+    val setOutputJsFile : string option (* filename *) -> unit
+    val getOutputJsFile : unit -> string option
 end
